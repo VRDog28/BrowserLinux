@@ -1,0 +1,1 @@
+write(shell.cwd + "\n", "white");

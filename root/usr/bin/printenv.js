@@ -1,0 +1,1 @@
+executeCommand("cat /tmp/var.conf");

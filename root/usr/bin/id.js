@@ -1,0 +1,1 @@
+write("uid=1000(" + window.shell.userName + ") gid=1000(" + window.shell.userName + ")\n");

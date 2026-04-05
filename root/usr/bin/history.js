@@ -1,0 +1,1 @@
+if (fs.files["/home/.bash_history"]) write(fs.files["/home/.bash_history"]);

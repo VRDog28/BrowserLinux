@@ -1,0 +1,1 @@
+write(window.uptime + " up\n");
