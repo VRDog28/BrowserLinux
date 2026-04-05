@@ -1,3 +1,4 @@
+
 const screen = document.getElementById("screen");
 let sda = null;
 
@@ -83,6 +84,16 @@ async function pickFS1() {
     });
     const file = await handle.getFile();
     return await file.text();
+}
+async function loadFS1FromURL() {
+    const url = "https://raw.githubusercontent.com/VRDog28/BrowserLinux/V1.0.0/main.fs1";
+
+    const res = await fetch(url);
+    if (!res.ok) {
+        throw new Error("Failed to fetch FS1");
+    }
+
+    return await res.text();
 }
 async function checkSHA256(path, expectedHash) {
     const content = window.fs.files[path];
@@ -323,10 +334,17 @@ async function boot() {
     await loadFont();
     screen.innerHTML = "";
 
+    write("Press ENTER to load local FS1\n", "white");
+    write("Press D to load FS1 from internet\n", "gray");
+
     const handler = async (e) => {
         if (e.repeat) return;
+
+        let fs1Text = null;
+
         if (e.key === "Enter") {
             document.removeEventListener("keydown", handler);
+
             const [handle] = await window.showOpenFilePicker({
                 types: [{
                     description: "FS1 Files",
@@ -335,32 +353,48 @@ async function boot() {
                     }
                 }]
             });
-            fs1FileHandle = handle;
-            window.fs1FileHandle = handle;
-            const file = await handle.getFile();
-            const fs1Text = await file.text();
-            sda = fs1Text;
-            window.fs = parseFS1(fs1Text);
-            window.sda = sda;
-            if (window.fs.files["/dev/sda"] == "*") {
-                window.fs.files["/dev/sda"] = window.sda;
-            } else if (window.fs.files["/dev/sda"] != "*") {
-                window.sda = window.fs.files["/dev/sda"];
-                sda = window.fs.files["/dev/sda"];
-            }
-            if (
-                window.fs.files["/firm/firmware.js"] && window.fs.meta["/firm"]
-            ) {
-                if (window.fs.meta["/firm"].hasOwnProperty(".firmware-unlock")) {
-                    await runFile("/firm/firmware.js");
-                    return;
-                }
-            }
-            await Startup();
-        }
-    };
 
-    write("press enter to boot");
+            const file = await handle.getFile();
+            fs1Text = await file.text();
+        }
+        if (e.key.toLowerCase() === "d") {
+            document.removeEventListener("keydown", handler);
+
+            try {
+                fs1Text = await loadFS1FromURL();
+            } catch (err) {
+                write("Failed to load FS1 from internet\n", "red");
+                return;
+            }
+        }
+
+        if (!fs1Text) return;
+
+
+
+        sda = fs1Text;
+        window.fs = parseFS1(fs1Text);
+        window.sda = sda;
+
+        if (window.fs.files["/dev/sda"] == "*") {
+            window.fs.files["/dev/sda"] = window.sda;
+        } else if (window.fs.files["/dev/sda"] != "*") {
+            window.sda = window.fs.files["/dev/sda"];
+            sda = window.fs.files["/dev/sda"];
+        }
+
+        if (
+            window.fs.files["/firm/firmware.js"] &&
+            window.fs.meta["/firm"]
+        ) {
+            if (window.fs.meta["/firm"].hasOwnProperty(".firmware-unlock")) {
+                await runFile("/firm/firmware.js");
+                return;
+            }
+        }
+
+        await Startup();
+    };
 
     document.addEventListener("keydown", handler);
 }
