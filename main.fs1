@@ -930,7 +930,7 @@ home="/home"
 lastStatus=0
 /etc/uas/setup.conf
 1
-setup=0
+setup=1
 /etc/uas/uas.js
 64
 window.shell.userPermission = 4 
@@ -3848,9 +3848,10 @@ readpermission=0
 writepermission=3
 readpermission=3
 /etc
-2
+3
 writepermission=3
 readpermission=3
+.superuser=default
 /root
 2
 writepermission=4
