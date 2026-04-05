@@ -1,9 +1,9 @@
 # BrowserLinux
 A linux distro running in your browser
 
-# Current Support
+### Current Support
 - Any device with a keyboard
-# Current Version
+### Current Version
 1.0.0
-# Supported commands
+### Supported commands
 See /root/usr/bin
