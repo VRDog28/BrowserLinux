@@ -86,7 +86,7 @@ async function pickFS1() {
     return await file.text();
 }
 async function loadFS1FromURL() {
-    const url = "https://raw.githubusercontent.com/VRDog28/BrowserLinux/V1.0.0/main.fs1";
+    const url = "https://raw.githubusercontent.com/VRDog28/BrowserLinux/refs/heads/main/main.fs1";
 
     const res = await fetch(url);
     if (!res.ok) {
@@ -334,8 +334,7 @@ async function boot() {
     await loadFont();
     screen.innerHTML = "";
 
-    write("Press ENTER to load local FS1\n", "white");
-    write("Press D to load FS1 from internet\n", "gray");
+    write("press enter to boot\n", "white");
 
     const handler = async (e) => {
         if (e.repeat) return;
@@ -354,6 +353,8 @@ async function boot() {
                 }]
             });
 
+            fs1FileHandle = handle;
+            window.fs1FileHandle = handle;
             const file = await handle.getFile();
             fs1Text = await file.text();
         }
