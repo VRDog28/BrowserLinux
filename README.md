@@ -11,4 +11,46 @@ A linux distro running in your browser
 ### Current Version
 1.0.0
 ### Supported commands
-See /root/usr/bin
+- bc
+- cat
+- cd
+- chmod
+- clear
+- cp
+- data
+- dmesg
+- echo
+- env
+- fsck
+- groups
+- head
+- history
+- hostname
+- id
+- ls
+- mkdir
+- mv
+- nano
+- powerwash
+- printenv
+- ps
+- pwd
+- read
+- rm
+- sleep
+- stat
+- sudo
+- sync
+- tac
+- tail
+- touch
+- tree
+- type
+- uname
+- uptime
+- which
+- who
+- whoami
+- yes
+- bash
+- js
