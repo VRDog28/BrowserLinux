@@ -6,7 +6,7 @@ My own linux distro running in your browser
 ![](https://github.com/VRDog28/BrowserLinux/blob/main/screenshots/screenshot3.png)
 ![](https://github.com/VRDog28/BrowserLinux/blob/main/screenshots/screenshot5.png)
 ![](https://github.com/VRDog28/BrowserLinux/blob/main/screenshots/screenshot6.png)
-
+![](https://github.com/VRDog28/BrowserLinux/blob/main/screenshots/screenshot7.jpg)
 ### Guide on how to run on any device
 - PC. visit https://vrdog28.github.io/BrowserLinux
 - Mobile. download hacker's keyboard and make sure to enable persistent notification and rename your main.fs1 to main.txt
