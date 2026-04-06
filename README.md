@@ -67,7 +67,6 @@ https://github.com/VRDog28/BrowserLinux/wiki
 - Fix user@host:path$ colors
 - Add functions, continue (while), elif (if)
 - Add more advanced bash syntax
-- Make subshells not only work on variables
 ## Why choose BrowserLinux:
 - Browser Linux adds features that other online terminals do not have.
 - This is fully coded in Javascript and does not use any real emulation
