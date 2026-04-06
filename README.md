@@ -66,13 +66,11 @@ https://github.com/VRDog28/BrowserLinux/wiki
 - Add more commands
 - Fix user@host:path$ colors
 - Add a help command
-- Make a Browser Linux Wiki
 - Add functions, continue (while), elif (if)
 - Support expressions like if echo "$OUTPUT" | grep "$SOMETHING"; then
 - Add grep
 - Add more advanced bash syntax
 - Make subshells not only work on variables
-- Fully remake the permission system to work like -rwxr--r-- (and support ls -l)
 - Add a curl command
 ## Why choose BrowserLinux:
 - Browser Linux adds features that other online terminals do not have.
