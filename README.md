@@ -7,7 +7,7 @@ A linux distro running in your browser
 ![](https://github.com/VRDog28/BrowserLinux/blob/main/screenshots/screenshot5.png)
 ![](https://github.com/VRDog28/BrowserLinux/blob/main/screenshots/screenshot6.png)
 
-### Guide on how to run any device
+### Guide on how to run on any device
 - PC. visit https://vrdog28.github.io/BrowserLinux
 - Mobile. download hacker's keyboard and make sure to enable persistent notification and rename your main.fs1 to main.txt
 - TV. connect a keyboard via USB go on your TV's internet browser and visit https://vrdog28.github.io/BrowserLinux and press D instead of enter to skip the file picker
