@@ -1,5 +1,5 @@
 # BrowserLinux
-A linux distro running in your browser  
+My own linux distro running in your browser  
 ==> https://vrdog28.github.io/BrowserLinux
 # Screenshots!
 
