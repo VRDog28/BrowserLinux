@@ -62,6 +62,8 @@ https://github.com/VRDog28/BrowserLinux/wiki
 - yes
 - bash
 - js
+- lolcat
+- neofetch
 ## To Do: (V2.0.0)
 - Add more commands
 - Fix user@host:path$ colors
