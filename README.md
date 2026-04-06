@@ -62,16 +62,12 @@ https://github.com/VRDog28/BrowserLinux/wiki
 - yes
 - bash
 - js
-## To Do:
+## To Do: (V2.0.0)
 - Add more commands
 - Fix user@host:path$ colors
-- Add a help command
 - Add functions, continue (while), elif (if)
-- Support expressions like if echo "$OUTPUT" | grep "$SOMETHING"; then
-- Add grep
 - Add more advanced bash syntax
 - Make subshells not only work on variables
-- Add a curl command
 ## Why choose BrowserLinux:
 - Browser Linux adds features that other online terminals do not have.
 - This is fully coded in Javascript and does not use any real emulation
