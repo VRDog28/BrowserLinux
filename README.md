@@ -66,7 +66,6 @@ https://github.com/VRDog28/BrowserLinux/wiki
 - neofetch
 ## To Do: (V2.0.0)
 - Add more commands
-- Fix user@host:path$ colors
 - Add functions, continue (while), elif (if)
 - Add more advanced bash syntax
 ## Why choose BrowserLinux:
