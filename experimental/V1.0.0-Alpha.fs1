@@ -1,0 +1,2162 @@
+fs1
+--folders
+/bin
+/boot
+/dev
+/etc
+/home
+/krnl
+/root
+/tmp
+/usr
+/var
+/etc/profiles
+/home/Documents
+/home/Downloads
+/home/Videos
+/root/bin
+/usr/bin
+/usr/share
+/usr/share/fonts
+--files
+/bin/bash
+1
+write("how tf did you run this file");
+/bin/cat.js
+68
+const filename = args[0];
+
+if (!filename) {
+  write("Usage: cat <filename>\n", "red");
+  return;
+}
+
+// --------------------
+// Resolve full path
+// --------------------
+let path;
+if (filename.startsWith("/")) {
+  path = filename.replace(/\/+/g, "/");
+} else {
+  path = (cwd === "/" ? "/" : cwd + "/") + filename;
+  path = path.replace(/\/+/g, "/");
+}
+
+// --------------------
+// Check if parent folder exists
+// --------------------
+function getParentFolder(path) {
+  const parts = path.split("/");
+  parts.pop(); // remove filename
+  return parts.join("/") || "/";
+}
+
+const parentFolder = getParentFolder(path);
+if (!fs.folders.includes(parentFolder) && parentFolder != "/") {
+  write(`Folder does not exist: ${parentFolder}\n`, "red");
+  return;
+}
+
+// --------------------
+// Check read permission
+// --------------------
+function hasReadPermission(path) {
+  if (userPermission === 4) return true; // superuser bypass
+
+  const parts = path.split("/").filter(Boolean);
+  let currentPath = "/";
+  let readPerm = 0;
+
+  for (const part of parts) {
+    currentPath = currentPath === "/" ? "/" + part : currentPath + "/" + part;
+    const meta = fs.meta[currentPath];
+    if (!meta) continue;
+
+    if (meta.readpermission !== undefined) readPerm = parseInt(meta.readpermission);
+  }
+
+  return userPermission >= readPerm;
+}
+
+if (!hasReadPermission(path)) {
+  write(`Access denied: ${filename}\n`, "red");
+  return;
+}
+
+// --------------------
+// Display file content
+// --------------------
+if (fs.files.hasOwnProperty(path)) {
+  log("cat", "cat successful")
+  write(fs.files[path] + "\n", "white");
+} else {
+  write(`File not found: ${filename}\n`, "red");
+}
+/bin/cd.js
+72
+if (args.length === 0 || args[0] == "~") {
+  cwd = "/home";
+  return;
+}
+
+let target = args[0];
+let newPath;
+
+// --------------------
+// Resolve new path
+// --------------------
+if (target === "..") {
+  if (cwd === "/") {
+    write("Already at root directory.\n", "yellow");
+    return;
+  }
+  const parts = cwd.split("/");
+  parts.pop(); // remove current folder
+  newPath = parts.length === 1 ? "/" : parts.join("/");
+}
+else if (target === "/") {
+  newPath = "/";
+}
+else if (target.startsWith("/")) {
+  newPath = target.replace(/\/+/g, "/"); // absolute
+}
+else {
+  newPath = (cwd === "/" ? "/" : cwd + "/") + target; // relative
+  newPath = newPath.replace(/\/+/g, "/");
+}
+
+// --------------------
+// Check folder exists
+// --------------------
+function folderExists(path) {
+  return path === "/" || fs.folders.includes(path);
+}
+
+// --------------------
+// Check read permission
+// --------------------
+function hasReadPermission(path) {
+  if (userPermission === 4) return true; // superuser bypass
+
+  const parts = path.split("/").filter(Boolean);
+  let currentPath = "/";
+  let readPerm = 0;
+
+  for (const part of parts) {
+    currentPath = currentPath === "/" ? "/" + part : currentPath + "/" + part;
+    const meta = fs.meta[currentPath];
+    if (!meta) continue;
+
+    if (meta.readpermission !== undefined) readPerm = parseInt(meta.readpermission);
+  }
+
+  return userPermission >= readPerm;
+}
+
+// --------------------
+// Attempt to cd
+// --------------------
+if (folderExists(newPath)) {
+  if (!hasReadPermission(newPath)) {
+    write(`Access denied: ${target}\n`, "red");
+  } else {
+    log("cd", "cd successful")
+    cwd = newPath;
+  }
+} else {
+  write(`Directory does not exist: ${target}\n`, "red");
+}
+/bin/chmod.js
+87
+if (!args || args.length < 3) {
+  write("Usage: chmod <read> <write> <path>\n", "red");
+  return;
+}
+
+const readPerm = parseInt(args[0]);
+const writePerm = parseInt(args[1]);
+const target = args[2];
+
+// --------------------
+// Validate permissions
+// --------------------
+if (
+  isNaN(readPerm) || readPerm < 0 || readPerm > 4 ||
+  isNaN(writePerm) || writePerm < 0 || writePerm > 4
+) {
+  write("Invalid permission. Use 0–4 for read, write.\n", "red");
+  return;
+}
+
+// --------------------
+// Resolve full path
+// --------------------
+let path;
+if (target.startsWith("/")) {
+  path = target.replace(/\/+/g, "/");
+} else {
+  path = (cwd === "/" ? "/" : cwd + "/") + target;
+  path = path.replace(/\/+/g, "/");
+}
+
+// --------------------
+// Check existence
+// --------------------
+const exists = fs.folders.includes(path) || fs.files.hasOwnProperty(path);
+if (!exists) {
+  write(`Path not found: ${target}\n`, "red");
+  return;
+}
+
+// --------------------
+// Get effective permission (recursive)
+// --------------------
+function getEffectivePermission(folderPath) {
+  const parts = folderPath.split("/").filter(Boolean);
+  let currentPath = "/";
+  let perm = 0;
+
+  for (const part of parts) {
+    currentPath = currentPath === "/" ? "/" + part : currentPath + "/" + part;
+    if (fs.meta[currentPath]) {
+      const meta = fs.meta[currentPath];
+      if (meta.readpermission !== undefined) perm = Math.max(perm, parseInt(meta.readpermission));
+      if (meta.writepermission !== undefined) perm = Math.max(perm, parseInt(meta.writepermission));
+    }
+  }
+
+  return perm;
+}
+
+// --------------------
+// Permission check
+// --------------------
+const currentPerm = getEffectivePermission(path);
+if (userPermission < currentPerm && userPermission !== 4) {
+  write(`Access denied: cannot change permissions of ${path}\n`, "red");
+  return;
+}
+
+// --------------------
+// Apply permissions
+// --------------------
+if (!fs.meta[path]) fs.meta[path] = {};
+fs.meta[path].readpermission = readPerm.toString();
+fs.meta[path].writepermission = writePerm.toString();
+
+// Keep backward-compatible single permission (max of three)
+fs.meta[path].permission = Math.max(readPerm, writePerm).toString();
+
+write(`Permissions of ${path} set: read=${readPerm}, write=${writePerm}\n`, "green");
+
+// --------------------
+// Save FS1
+// --------------------
+if (typeof saveFS1 === "function") {
+  await saveFS1();
+}
+/bin/clear.js
+1
+clear();
+/bin/date.js
+1
+write(new Date().toISOString().split('T')[0] + " " + new Date().toLocaleTimeString('en-GB') + "\n");
+/bin/dmesg.js
+1
+write("Unknown signal 31\n");
+/bin/echo.js
+1
+write(args.join(" ") + "\n");
+/bin/fsck.js
+83
+// fsck.js — File system check and repair
+if (userPermission < 4) {
+  write("Error: fsck must be run as superuser\n", "red");
+  return;
+}
+log("FSCK", "Attempting to start a full disk scan");
+write("Starting FSCK...\n", "cyan");
+
+// --------------------
+// Helper: normalize paths
+// --------------------
+function normalizePath(p) {
+  return p.replace(/\/+/g, "/").replace(/\/+/g, "/");
+}
+
+// --------------------
+// Remove ghost files whose parent folders don't exist
+// --------------------
+for (const filePath of Object.keys(fs.files)) {
+  const parts = filePath.split("/").slice(0, -1);
+  const parent = parts.length === 0 ? "/" : parts.join("/");
+  if (!fs.folders.includes(parent) && parent !== "/") {
+    log("FSCK", "Ghost file detected");
+    write(`Removed ghost file: ${filePath}\n`, "red");
+    delete fs.files[filePath];
+    if (fs.meta[filePath]) delete fs.meta[filePath];
+  }
+}
+
+// --------------------
+// Remove ghost folders (except root/system folders)
+// --------------------
+for (const folder of [...fs.folders]) {
+  // Skip root itself
+  if (folder === "/") continue;
+
+  // Skip valid root-level folders
+  const rootLevel = folder.split("/").filter(Boolean).length === 1;
+  if (rootLevel) continue;
+
+  // Determine parent folder
+  const parts = folder.split("/").filter(Boolean);
+  const parent = "/" + parts.slice(0, -1).join("/");
+
+  // Remove only if parent is missing
+  if (!fs.folders.includes(parent)) {
+    log("FSCK", "Ghost folder detected");
+    write(`Removed ghost folder: ${folder}\n`, "red");
+    fs.folders = fs.folders.filter(f => f !== folder);
+    if (fs.meta[folder]) delete fs.meta[folder];
+  }
+}
+
+
+// --------------------
+// Fix --folders section
+// --------------------
+for (const folder of [...fs.folders]) {
+  if (!folder.startsWith("/")) {
+    log("FSCK", "Removed invalid folder");
+    write(`Removed invalid folder path: ${folder}\n`, "red");
+    fs.folders = fs.folders.filter(f => f !== folder);
+    if (fs.meta[folder]) delete fs.meta[folder];
+  }
+}
+
+// --------------------
+// Fix --meta section
+// --------------------
+for (const path in fs.meta) {
+  if (!path.startsWith("/") || (!fs.folders.includes(path) && !fs.files[path])) {
+    log("FSCK", "Removed invalid meta");
+    write(`Removed invalid meta for: ${path}\n`, "red");
+    delete fs.meta[path];
+  }
+}
+log("FSCK", "Finished", true);
+write("FSCK finished!\n", "green");
+
+// --------------------
+// Save FS1 if needed
+// --------------------
+if (typeof saveFS1 === "function") await saveFS1();
+/bin/hostname.js
+2
+if (args.length === 0) write(window.hostName + "\n");
+if (args[0].toLowerCase() == "-i") write("127.0.0.1\n");
+/bin/id.js
+1
+write("uid=10368(" + window.userName + ") gid=10368()\n");
+/bin/ls.js
+83
+// --------------------
+// ls command
+// --------------------
+let target = args[0] || "."; // default is current folder
+let listPath;
+
+// --------------------
+// Resolve path
+// --------------------
+if (target === ".") {
+  listPath = cwd;
+} else if (target.startsWith("/")) {
+  listPath = target.replace(/\/+/g, "/");
+} else {
+  listPath = (cwd === "/" ? "/" : cwd + "/") + target;
+  listPath = listPath.replace(/\/+/g, "/");
+}
+
+// Ensure folder exists
+if (listPath !== "/" && !fs.folders.includes(listPath)) {
+  write(`Directory does not exist: ${target}\n`, "red");
+  return;
+}
+
+// --------------------
+// Check read permission
+// --------------------
+function getEffectiveReadPermission(folderPath) {
+  const parts = folderPath.split("/").filter(Boolean);
+  let currentPath = "/";
+  let perm = 0;
+
+  for (const part of parts) {
+    currentPath = currentPath === "/" ? "/" + part : currentPath + "/" + part;
+    if (fs.meta[currentPath] && fs.meta[currentPath].readpermission !== undefined) {
+      perm = parseInt(fs.meta[currentPath].readpermission);
+    }
+  }
+
+  return perm;
+}
+
+if (!(userPermission >= getEffectiveReadPermission(listPath) || userPermission === 4)) {
+  write(`Access denied: cannot read ${target}\n`, "red");
+  return;
+}
+
+// --------------------
+// Prepare listing
+// --------------------
+const listed = [];
+const prefix = listPath === "/" ? "/" : listPath + "/";
+
+// List folders
+for (const folder of fs.folders) {
+  if (folder.startsWith(prefix)) {
+    const relative = folder.slice(prefix.length);
+    if (relative && !relative.includes("/")) {
+      listed.push({ name: relative, type: "folder" });
+    }
+  }
+}
+
+// List files
+for (const filePath in fs.files) {
+  if (filePath.startsWith(prefix)) {
+    const relative = filePath.slice(prefix.length);
+    if (relative && !relative.includes("/")) {
+      listed.push({ name: relative, type: "file" });
+    }
+  }
+}
+
+// --------------------
+// Print output
+// --------------------
+for (const item of listed) {
+  if (item.type === "folder") write(item.name + " ", "cyan");
+}
+for (const item of listed) {
+  if (item.type === "file") write(item.name + " ", "white");
+}
+newline();
+/bin/mkdir.js
+73
+// --------------------
+// mkdir command
+// --------------------
+if (!args || args.length === 0) {
+  write("Usage: mkdir <foldername>\n", "red");
+} else {
+  const foldername = args[0];
+
+  // --------------------
+  // Resolve full path
+  // --------------------
+  let path;
+  if (foldername.startsWith("/")) {
+    path = foldername.replace(/\/+/g, "/");
+  } else {
+    path = (cwd === "/" ? "/" : cwd + "/") + foldername;
+    path = path.replace(/\/+/g, "/");
+  }
+
+  // --------------------
+  // Helper: get effective permissions (recursive)
+  // --------------------
+  function getEffectivePermissions(folderPath) {
+    const parts = folderPath.split("/").filter(Boolean);
+    let currentPath = "/";
+    let perms = { read: 0, write: 0, execute: 0 }; // default
+
+    for (const part of parts) {
+      currentPath = currentPath === "/" ? "/" + part : currentPath + "/" + part;
+      if (fs.meta[currentPath]) {
+        if (fs.meta[currentPath].readpermission !== undefined) perms.read = parseInt(fs.meta[currentPath].readpermission);
+        if (fs.meta[currentPath].writepermission !== undefined) perms.write = parseInt(fs.meta[currentPath].writepermission);
+        if (fs.meta[currentPath].executepermission !== undefined) perms.execute = parseInt(fs.meta[currentPath].executepermission);
+      }
+    }
+
+    return perms;
+  }
+
+  // --------------------
+  // Parent folder
+  // --------------------
+  const parts = path.split("/");
+  parts.pop(); // remove new folder itself
+  const parentFolder = parts.join("/") || "/"; // root if empty
+
+  // Check parent exists
+  if (parentFolder !== "/" && !fs.folders.includes(parentFolder)) {
+    write(`Error: Parent folder does not exist: ${parentFolder}\n`, "red");
+    return;
+  }
+
+  // --------------------
+  // Permission check
+  // --------------------
+  const parentPerms = getEffectivePermissions(parentFolder);
+  if (!(userPermission >= parentPerms.write || userPermission === 4)) {
+    write(`Access denied: cannot create folder in ${parentFolder}\n`, "red");
+    return;
+  }
+
+  // --------------------
+  // Create folder
+  // --------------------
+  if (fs.folders.includes(path)) {
+    write(`Folder already exists: ${foldername}\n`, "yellow");
+  } else {
+    fs.folders.push(path);
+    write(`Created folder: ${foldername}\n`, "green");
+
+    if (typeof saveFS1 === "function") await saveFS1();
+  }
+}
+/bin/mv.js
+151
+if (!args || args.length < 2) {
+  write("Usage: mv <file|folder> <folder>\n", "red");
+  return;
+}
+
+const target = args[0];
+const folder = args[1];
+
+function getEffectiveWritePermission(folderPath) {
+  const parts = folderPath.split("/").filter(Boolean);
+  let currentPath = "/";
+  let writePerm = 0; // default
+
+  for (const part of parts) {
+    currentPath = currentPath === "/" ? "/" + part : currentPath + "/" + part;
+    if (fs.meta[currentPath] && fs.meta[currentPath].writepermission !== undefined) {
+      writePerm = parseInt(fs.meta[currentPath].writepermission);
+    }
+  }
+  return writePerm;
+}
+function getEffectiveReadPermission(folderPath) {
+  const parts = folderPath.split("/").filter(Boolean);
+  let currentPath = "/";
+  let readPerm = 0; // default
+
+  for (const part of parts) {
+    currentPath = currentPath === "/" ? "/" + part : currentPath + "/" + part;
+    if (fs.meta[currentPath] && fs.meta[currentPath].readpermission !== undefined) {
+      readPerm = parseInt(fs.meta[currentPath].readpermission);
+    }
+  }
+  return readPerm;
+}
+function containsProtectedItems(folderPath) {
+  for (const filePath of Object.keys(fs.files)) {
+    if (filePath.startsWith(folderPath + "/") && !canWrite(filePath)) {
+      return true;
+    }
+  }
+  for (const subFolder of fs.folders) {
+    if (subFolder.startsWith(folderPath + "/") && !canWrite(subFolder)) {
+      return true;
+    }
+  }
+  return false;
+}
+function canRead(path) {
+  return userPermission >= getEffectiveReadPermission(path) || userPermission === 4;
+}
+function canWrite(path) {
+  return userPermission >= getEffectiveWritePermission(path) || userPermission === 4;
+}
+
+let path;
+if (target.startsWith("/")) {
+  path = target.replace(/\/+/g, "/");
+} else {
+  path = (cwd === "/" ? "/" : cwd + "/") + target;
+  path = path.replace(/\/+/g, "/");
+}
+let path2;
+if (folder.startsWith("/")) {
+  path2 = folder.replace(/\/+/g, "/");
+} else {
+  path2 = (cwd === "/" ? "/" : cwd + "/") + folder;
+  path2 = path2.replace(/\/+/g, "/");
+}
+// Permission check
+if (fs.folders.includes(path)) {
+    if (containsProtectedItems(path)) {
+        write("Permission denied!\n", "red");
+        return;
+    }
+} else if (!fs.files.hasOwnProperty(path)) {
+    write ("Invalid path!\n", "red");
+    return;
+}
+
+if (!canWrite(path) || !canRead(path)) {
+    write("Permission denied!\n", "red");
+    return;
+}
+if (fs.folders.includes(path2)) {
+    if (!canWrite(path2)) {
+        write("Permission denied!\n", "red");
+        return;
+    }
+} else if (path2 != "/"){
+    write("Invalid path!\n", "red");
+    return;
+}
+
+// Moving a file
+if (fs.files.hasOwnProperty(path)) {
+    let file = fs.files[path];
+    const fileName = path.split("/").pop();
+    delete fs.files[path];
+    if (path2 == "/") {
+        let newfile = "/" + fileName;
+        fs.files[newfile] = file;
+        saveFS1();
+    } else {
+        let newfile = path2 + "/" + fileName;
+        fs.files[newfile] = file;
+        saveFS1();
+    }
+} else if (fs.folders.includes(path)) {
+    const folderName = path.split("/").pop();
+    const newBase = path2 === "/" ? "/" + folderName : path2 + "/" + folderName;
+    if (newBase.startsWith(path + "/")) {
+        write("Cannot move a folder into itself!\n", "red");
+        return;
+    }
+    for (const filePath of Object.keys(fs.files)) {
+        if (filePath.startsWith(path + "/")) {
+            const relative = filePath.slice(path.length);
+            const newPath = newBase + relative;
+
+            fs.files[newPath] = fs.files[filePath];
+            delete fs.files[filePath];
+        }
+    }
+    let updatedFolders = [];
+    for (const folderPath of fs.folders) {
+        if (folderPath === path) continue;
+
+        if (folderPath.startsWith(path + "/")) {
+            const relative = folderPath.slice(path.length);
+            updatedFolders.push(newBase + relative);
+        } else {
+            updatedFolders.push(folderPath);
+        }
+    }
+    updatedFolders.push(newBase);
+    fs.folders = updatedFolders;
+    const newMeta = {};
+    for (const metaPath of Object.keys(fs.meta)) {
+        if (metaPath === path || metaPath.startsWith(path + "/")) {
+            const relative = metaPath.slice(path.length);
+            const newPath = newBase + relative;
+            newMeta[newPath] = { ...fs.meta[metaPath] };
+        } else {
+            newMeta[metaPath] = fs.meta[metaPath];
+        }
+    }
+
+    fs.meta = newMeta;
+
+    saveFS1();
+}
+/bin/nano.js
+168
+if (!args || args.length === 0) {
+  write("Usage: nano <file>\n", "red");
+  return;
+}
+
+const filename = args[0];
+
+// --------------------
+// Resolve full path
+// --------------------
+let path;
+if (filename.startsWith("/")) {
+  path = filename.replace(/\/+/g, "/");
+} else {
+  path = (cwd === "/" ? "/" : cwd + "/") + filename;
+  path = path.replace(/\/+/g, "/");
+}
+
+// --------------------
+// Parent folder check
+// --------------------
+const parts = path.split("/");
+parts.pop(); // remove filename
+const parentFolder = parts.join("/") || "/";
+
+if (parentFolder !== "/" && !fs.folders.includes(parentFolder)) {
+  write(`Error: Parent folder does not exist: ${parentFolder}\n`, "red");
+  return;
+}
+
+// --------------------
+// Write permission
+// --------------------
+function getEffectiveWritePermission(folderPath) {
+  const parts = folderPath.split("/").filter(Boolean);
+  let currentPath = "/";
+  let writePerm = 0;
+  for (const part of parts) {
+    currentPath = currentPath === "/" ? "/" + part : currentPath + "/" + part;
+    if (fs.meta[currentPath]?.writepermission !== undefined) {
+      writePerm = parseInt(fs.meta[currentPath].writepermission);
+    }
+  }
+  return writePerm;
+}
+
+const parentWritePerm = getEffectiveWritePermission(parentFolder);
+if (parentWritePerm > userPermission && userPermission !== 4) {
+  write(`Access denied: cannot write to folder ${parentFolder}\n`, "red");
+  return;
+}
+
+// --------------------
+// Load file
+// --------------------
+let buffer = (fs.files[path] || "").split("\n");
+if (buffer.length === 0) buffer = [""];
+
+let cursorY = 0, cursorX = 0, isOpen = true;
+
+window.inputMode = "nano";
+screen.innerHTML = "";
+
+// --------------------
+// Render
+// --------------------
+function render() {
+  clear();
+  buffer.forEach((line, i) => {
+    for (let j = 0; j <= line.length; j++) {
+      if (i === cursorY && j === cursorX) {
+        write(line[j] || " ", "black", "white"); // cursor
+      } else if (j < line.length) {
+        write(line[j], "white");
+      }
+    }
+    newline();
+  });
+  write("-- NANO -- Ctrl+S=Save Ctrl+Q=Quit\n", "green");
+}
+
+// --------------------
+// Exit nano
+// --------------------
+async function exitNano() {
+  document.removeEventListener("keydown", nanoKeyHandler);
+  window.inputMode = "command";
+
+  // Save the file
+  fs.files[path] = buffer.join("\n");
+  if (typeof saveFS1 === "function") await saveFS1();
+
+  // Clear Nano screen
+  clear();
+
+  prompt();
+
+  isOpen = false;
+}
+
+// --------------------
+// Key handler
+// --------------------
+async function nanoKeyHandler(e) {
+  if (window.inputMode !== "nano") return;
+  e.preventDefault();
+
+  // Ctrl+S = save
+  if (e.ctrlKey && e.key.toLowerCase() === "s") {
+    fs.files[path] = buffer.join("\n");
+    if (typeof saveFS1 === "function") await saveFS1();
+    write(`\nSaved "${path}"\n`, "green");
+    render();
+    return;
+  }
+
+  // Ctrl+Q = quit
+  if (e.ctrlKey && e.key.toLowerCase() === "q") {
+    await exitNano();
+    return;
+  }
+
+  // Arrows
+  if (e.key === "ArrowUp") { cursorY = Math.max(0, cursorY - 1); cursorX = Math.min(cursorX, buffer[cursorY].length); render(); return; }
+  if (e.key === "ArrowDown") { cursorY = Math.min(buffer.length - 1, cursorY + 1); cursorX = Math.min(cursorX, buffer[cursorY].length); render(); return; }
+  if (e.key === "ArrowLeft") { if (cursorX > 0) cursorX--; else if (cursorY > 0) { cursorY--; cursorX = buffer[cursorY].length; } render(); return; }
+  if (e.key === "ArrowRight") { if (cursorX < buffer[cursorY].length) cursorX++; else if (cursorY < buffer.length - 1) { cursorY++; cursorX = 0; } render(); return; }
+
+  // Enter
+  if (e.key === "Enter") {
+    const line = buffer[cursorY];
+    buffer[cursorY] = line.slice(0, cursorX);
+    buffer.splice(cursorY + 1, 0, line.slice(cursorX));
+    cursorY++; cursorX = 0;
+    render();
+    return;
+  }
+
+  // Backspace
+  if (e.key === "Backspace") {
+    const line = buffer[cursorY];
+    if (cursorX > 0) {
+      buffer[cursorY] = line.slice(0, cursorX - 1) + line.slice(cursorX);
+      cursorX--;
+    } else if (cursorY > 0) {
+      cursorX = buffer[cursorY - 1].length;
+      buffer[cursorY - 1] += buffer[cursorY];
+      buffer.splice(cursorY, 1);
+      cursorY--;
+    }
+    render();
+    return;
+  }
+
+  // Normal characters
+  if (e.key.length === 1) {
+    const line = buffer[cursorY];
+    buffer[cursorY] = line.slice(0, cursorX) + e.key + line.slice(cursorX);
+    cursorX++;
+    render();
+  }
+}
+
+// --------------------
+// Start
+// --------------------
+document.addEventListener("keydown", nanoKeyHandler);
+render();
+/bin/ps.js
+2
+if (args.length === 0) { write("CMD\n");write("terminal.js\n"); write("ps.js\n"); };
+if (args[0] == "-ef") { write("CMD\n"); write("terminal.js\n"); write("ps.js\n"); write("kernel.js\n"); };
+/bin/pwd.js
+1
+write(cwd + "\n", "white");
+/bin/rm.js
+135
+if (!args || args.length === 0) {
+  write("Usage: rm <path>\n", "red");
+  return;
+}
+
+const target = args[0];
+
+// --------------------
+// Helper: get effective write permission (recursive)
+function getEffectiveWritePermission(folderPath) {
+  const parts = folderPath.split("/").filter(Boolean);
+  let currentPath = "/";
+  let writePerm = 0; // default
+
+  for (const part of parts) {
+    currentPath = currentPath === "/" ? "/" + part : currentPath + "/" + part;
+    if (fs.meta[currentPath] && fs.meta[currentPath].writepermission !== undefined) {
+      writePerm = parseInt(fs.meta[currentPath].writepermission);
+    }
+  }
+  return writePerm;
+}
+
+// --------------------
+// Helper: check if user can delete
+function canDelete(path) {
+  return userPermission >= getEffectiveWritePermission(path) || userPermission === 4;
+}
+
+// --------------------
+// Determine full path
+let path;
+if (target.startsWith("/")) {
+  path = target.replace(/\/+/g, "/");
+} else {
+  path = (cwd === "/" ? "/" : cwd + "/") + target;
+  path = path.replace(/\/+/g, "/");
+}
+
+// --------------------
+// Helper: check if folder contains higher-permission items
+function containsProtectedItems(folderPath) {
+  for (const filePath of Object.keys(fs.files)) {
+    if (filePath.startsWith(folderPath + "/") && !canDelete(filePath)) {
+      return true;
+    }
+  }
+  for (const subFolder of fs.folders) {
+    if (subFolder.startsWith(folderPath + "/") && !canDelete(subFolder)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// --------------------
+// Helper: delete folder recursively
+function deleteFolderRecursively(folderPath) {
+  if (containsProtectedItems(folderPath)) {
+    write(`Folder not empty or contains protected items: ${folderPath}\n`, "red");
+    return;
+  }
+
+  // Delete files inside folder
+  for (const filePath of Object.keys(fs.files)) {
+    if (filePath === folderPath || filePath.startsWith(folderPath + "/")) {
+      if (canDelete(filePath)) {
+        delete fs.files[filePath];
+        if (fs.meta[filePath]) delete fs.meta[filePath];
+        write(`Deleted file: ${filePath}\n`, "green");
+      } else {
+        write(`Access denied to file: ${filePath}\n`, "red");
+      }
+    }
+  }
+
+  // Delete subfolders
+  for (const subFolder of [...fs.folders]) {
+    if (subFolder === folderPath || subFolder.startsWith(folderPath + "/")) {
+      if (canDelete(subFolder)) {
+        fs.folders = fs.folders.filter(f => f !== subFolder);
+        if (fs.meta[subFolder]) delete fs.meta[subFolder];
+        write(`Deleted folder: ${subFolder}\n`, "green");
+      } else {
+        write(`Access denied to folder: ${subFolder}\n`, "red");
+      }
+    }
+  }
+
+  // Delete folder metadata itself if allowed
+  if (canDelete(folderPath) && fs.meta[folderPath]) {
+    delete fs.meta[folderPath];
+  }
+}
+
+// --------------------
+// Full-disk deletion
+if (path === "/") {
+  log("RM", "ATTEMPTING A FULL DISK DELETION", true);
+  // Delete all folders under root safely
+  for (const folder of [...fs.folders]) {
+    if (folder !== "/") deleteFolderRecursively(folder);
+  }
+
+  // Delete all files under root
+  for (const filePath of Object.keys(fs.files)) {
+    if (canDelete(filePath)) {
+      delete fs.files[filePath];
+      if (fs.meta[filePath]) delete fs.meta[filePath];
+      write(`Deleted file: ${filePath}\n`, "green");
+    } else {
+      write(`Access denied to file: ${filePath}\n`, "red");
+    }
+  }
+}
+
+// --------------------
+// Delete single folder or file
+else if (fs.folders.includes(path)) {
+  deleteFolderRecursively(path);
+} else if (fs.files.hasOwnProperty(path)) {
+  if (!canDelete(path)) {
+    write(`Access denied: ${path}\n`, "red");
+  } else {
+    delete fs.files[path];
+    if (fs.meta[path]) delete fs.meta[path];
+    write(`Deleted file: ${path}\n`, "green");
+  }
+} else {
+  write(`File or folder not found: ${target}\n`, "red");
+}
+
+// --------------------
+// Save changes
+if (typeof saveFS1 === "function") await saveFS1();
+/bin/stat.js
+23
+if (!args || args.length === 0) {
+  write("Usage: stat <path>\n", "red");
+  return;
+}
+const target = args[0];
+let path;
+if (target.startsWith("/")) {
+  path = target.replace(/\/+/g, "/");
+} else {
+  path = (cwd === "/" ? "/" : cwd + "/") + target;
+  path = path.replace(/\/+/g, "/");
+}
+if (!fs.meta.hasOwnProperty(path)) {
+    write("Invalid path or path has no metadata!\n", "yellow");
+} else {
+    write("Path metadata:\n", "rgb(0, 255, 0)");
+
+    const meta = fs.meta[path];
+    for (const key in meta) {
+        if (key.startsWith(".") && userPermission < 4) continue;
+        write(key + ": " + meta[key] + "\n", "rgb(0, 255, 0)");
+    }
+}
+/bin/sudo.js
+76
+if (!args || args.length === 0) {
+  write("Usage: sudo <command> [args...]\n", "red");
+} else {
+  const superuserPass = fs.meta["/etc"]?.[".superuser"];
+  if (!superuserPass) {
+    log("Sudo", "No superuser password set", true);
+    write("No superuser password set. Cannot run sudo.\n", "red");
+    return;
+  }
+  log("Sudo", "Attempting to request superuser password", true);
+  await new Promise(resolve => {
+    // Ask for superuser password
+    requestSuperuserPassword(async (input) => {
+      newline();
+
+      if (input !== superuserPass) {
+        log("Sudo", `Incorrect superuser password`, true);
+        write("Incorrect superuser password.\n", "red");
+        resolve();
+        return;
+      }
+
+
+      // Save previous permission and grant superuser
+      const prevPermission = window.userPermission;
+      window.userPermission = 4; // superuser
+
+try {
+  const fullCmd = args.join(" ");
+  if (fullCmd == "-s") {
+    executeCommand("userPermission=4");
+  } else {
+    log("Sudo", `Attempting to execute ${args[0]}`, true);
+    await executeCommand(fullCmd);
+  }
+} catch (e) {
+    log("Sudo", `Error running ${args[0]}: ${e.message}\n`, true);
+    write(`Error running ${args[0]}: ${e.message}\n`, "red");
+}
+
+      // Restore original permission
+      // --------------------
+      // Check var.conf for userPermission
+      // --------------------
+      let newPerm = prevPermission;
+
+      if (fs.files["/tmp/var.conf"]) {
+        const lines = fs.files["/tmp/var.conf"].split("\n");
+
+        for (let line of lines) {
+          line = line.trim();
+          if (!line || line.startsWith("#")) continue;
+
+          const eq = line.indexOf("=");
+          if (eq === -1) continue;
+
+          const key = line.slice(0, eq).trim();
+          const valueStr = line.slice(eq + 1).trim();
+
+          if (key === "userPermission") {
+            try {
+              newPerm = Function(`"use strict"; return (${valueStr});`)();
+            } catch {}
+            break;
+          }
+        }
+      }
+
+      // --------------------
+      // Apply correct permission
+      // --------------------
+      window.userPermission = newPerm;
+      resolve();
+    });
+  });
+}
+/bin/sync.js
+19
+if (!fs1FileHandle) return;
+
+try {
+    const file = await fs1FileHandle.getFile();
+    const fs1Content = await file.text();
+    const newFS = parseFS1(fs1Content);
+
+    fs.folders.length = 0;
+    fs.folders.push(...newFS.folders);
+
+    for (const key in fs.files) delete fs.files[key];
+    for (const key in newFS.files) fs.files[key] = newFS.files[key];
+
+    for (const key in fs.meta) delete fs.meta[key];
+    for (const key in newFS.meta) fs.meta[key] = newFS.meta[key];
+} catch (e) {
+    log("kernel", "FS1 SYNC FAILED", true);
+    write("[FS1 sync failed: " + e.message + "]\n", "red");
+}
+/bin/terminal.js
+351
+let input = "";
+let cursorPos = 0;
+let inputLineEl = null;
+
+
+
+function prompt() {
+  input = "";
+  cursorPos = 0;
+
+  const line = document.createElement("div");
+  screen.appendChild(line);
+  inputLineEl = line;
+
+  renderInputLine();
+}
+
+function setVar(name, value) {
+  if (!name || typeof name !== "string") {
+    write("Invalid variable name\n", "red");
+    return;
+  }
+  log("Terminal", "Attempting to set variable");
+
+  // --------------------
+  // Permission check
+  // --------------------
+  if (window.protectedVars?.has(name) && userPermission !== 4) {
+    write(`Permission denied: cannot modify '${name}' (requires sudo)\n`, "red");
+    return;
+  }
+  if (name=="userPermission") {
+    log("Terminal", "Dangerous user request catched");
+  }
+
+  const varConfPath = "/tmp/var.conf";
+
+  if (!fs.files[varConfPath]) fs.files[varConfPath] = "";
+
+  const lines = fs.files[varConfPath]
+    .split("\n")
+    .filter(l => l.trim() !== "");
+
+  let found = false;
+
+  for (let i = 0; i < lines.length; i++) {
+    const eq = lines[i].indexOf("=");
+    if (eq === -1) continue;
+    const key = lines[i].slice(0, eq).trim();
+    if (key === name) {
+      lines[i] = `${name}=${JSON.stringify(value)}`;
+      found = true;
+      break;
+    }
+  }
+
+  if (!found) {
+    lines.push(`${name}=${JSON.stringify(value)}`);
+  }
+
+  fs.files[varConfPath] = lines.join("\n");
+
+  // Update window
+  window[name] = value;
+
+  // Track allowed keys
+  if (!window.allowedKeys) window.allowedKeys = new Set();
+  window.allowedKeys.add(name);
+
+  // Save immediately
+  if (typeof saveFS1 === "function") saveFS1();
+
+}
+
+// Handle command execution
+async function executeCommand(cmdLine) {
+  let targetFile = null;
+  let append = false; // overwrite or append flag
+  let commandPart = cmdLine;
+
+
+  const assignMatch = cmdLine.match(/^([a-zA-Z_]\w*)=(.+)$/);
+  if (assignMatch) {
+    const varName = assignMatch[1];
+    let varValue;
+    try {
+      varValue = Function(`"use strict"; return (${assignMatch[2]});`)();
+    } catch {
+      varValue = assignMatch[2]; // fallback to string
+    }
+    setVar(varName, varValue);
+    return; // stop further command execution
+  }
+
+  // --------------------
+  // Detect redirection
+  // --------------------
+  if (cmdLine.includes(">>")) {
+    const parts = cmdLine.split(">>");
+    commandPart = parts[0].trim();
+    targetFile = parts[1].trim();
+    append = true;
+  } else if (cmdLine.includes(">")) {
+    const parts = cmdLine.split(">");
+    commandPart = parts[0].trim();
+    targetFile = parts[1].trim();
+    append = false;
+  }
+
+  // --------------------
+  // Detect pipe
+  // --------------------
+  const pipeParts = commandPart.split("|").map(p => p.trim());
+  if (pipeParts.length > 1) {
+    let capturedOutput = "";
+    const originalWrite = write;
+    write = (text, color = "white", bg = "black") => {
+      capturedOutput += text;
+    };
+
+    await executeCommand(pipeParts[0]);
+    write = originalWrite;
+
+    capturedOutput = capturedOutput.replace(/\n$/, "");
+    window.pipe = capturedOutput;
+
+    await executeCommand(pipeParts.slice(1).join(" | "));
+    window.pipe = "";
+    return;
+  }
+
+  // --------------------
+  // Replace $VAR using only keys present in \tmp\var.conf
+  // --------------------
+  if (fs.files["/tmp/var.conf"]) {
+    const allowedKeys = new Set();
+
+    fs.files["/tmp/var.conf"].split("\n").forEach(line => {
+      const eq = line.indexOf("=");
+      if (eq === -1) return;
+      const key = line.slice(0, eq).trim();
+      if (key) allowedKeys.add(key);
+    });
+
+    commandPart = commandPart.replace(/\$([a-zA-Z_]\w*)/g, (_, varName) => {
+      if (allowedKeys.has(varName) && !window.__blacklist.has(varName) && window[varName] !== undefined) {
+        const val = window[varName];
+        return (typeof val === "object") ? JSON.stringify(val) : val;
+      }
+      return ""; // unknown or blacklisted variables expand to empty string
+    });
+  }
+
+  // --------------------
+  // Split command and args
+  // --------------------
+  const parts = commandPart.split(" ");
+  const cmd = parts[0];
+  const argsOrig = parts.slice(1);
+
+  let originalWrite = write;
+  let wroteToFile = false;
+
+  // --------------------
+  // Wrap write if redirection
+  // --------------------
+  if (targetFile) {
+    write = (text, color = "white", bg = "black") => {
+      let path;
+      if (targetFile.startsWith("/")) {
+        path = targetFile.replace(/\/+/g, "/");
+      } else {
+
+        path = (cwd === "/" ? "/" : cwd + "/") + targetFile;
+
+        path = path.replace(/\/+/g, "/");
+}
+
+      const partsPath = path.split("/").filter(Boolean);
+      let effectivePermission = 0;
+      let currentPath = "/";
+      for (const part of partsPath) {
+        currentPath = currentPath === "/" ? "/" + part : currentPath + "/" + part;
+        if (fs.meta[currentPath]?.permission !== undefined) {
+          effectivePermission = parseInt(fs.meta[currentPath].permission);
+        }
+      }
+
+      if (userPermission < effectivePermission && userPermission !== 4) {
+        originalWrite(`Access denied to write: ${path}\n`, "red");
+        return;
+      }
+
+      if (append) fs.files[path] = (fs.files[path] || "") + text;
+      else fs.files[path] = text;
+      wroteToFile = true;
+    };
+  }
+
+  // --------------------
+  // Find and execute command using window.path
+  // --------------------
+  let cmdPath = null;
+  for (const base of window.path) {
+    const fullPath = `${base}/${cmd}.js`;
+    if (fs.files[fullPath]) {
+      cmdPath = fullPath;
+      break;
+    }
+  }
+
+  if (cmdPath) {
+    try {
+      window.args = argsOrig;
+      await runFile(cmdPath);
+    } catch (e) {
+      originalWrite(`Error executing ${cmd}: ${e.message}\n`, "red");
+    }
+  } else {
+    originalWrite(`Command not found: ${cmd}\n`, "red");
+  }
+
+  if (targetFile) write = originalWrite;
+
+  if (wroteToFile && typeof saveFS1 === "function") {
+    await saveFS1();
+  }
+}
+function renderInputLine() {
+  if (!inputLineEl) {
+    inputLineEl = document.createElement("div");
+    screen.appendChild(inputLineEl);
+  }
+
+  inputLineEl.innerHTML = "";
+
+  // Prompt ($ always lime)
+  const promptSpan = document.createElement("span");
+  promptSpan.textContent = "$ ";
+  if (userPermission > 3) promptSpan.style.color = "red";
+    if (userPermission < 4) promptSpan.style.color = "lime";
+  promptSpan.style.backgroundColor = window.theme?.[1] || "black"; // theme background
+  promptSpan.style.fontSize = window.theme?.[3] || "14px";
+  promptSpan.style.fontFamily = getComputedStyle(document.body).fontFamily;
+  inputLineEl.appendChild(promptSpan);
+
+  // Input + cursor
+  for (let i = 0; i <= input.length; i++) {
+    const span = document.createElement("span");
+
+    if (i === cursorPos) {
+      span.textContent = input[i] || " ";
+      span.style.backgroundColor = "white"; // cursor always white background
+      span.style.color = "black";           // cursor text always black
+    } else if (i < input.length) {
+      span.textContent = input[i];
+      span.style.color = window.theme?.[0] || "white";
+      span.style.backgroundColor = window.theme?.[1] || "black";
+    }
+
+    span.style.fontSize = window.theme?.[3] || "14px";
+    span.style.fontFamily = getComputedStyle(document.body).fontFamily;
+
+    inputLineEl.appendChild(span);
+  }
+}
+
+// Handle typing
+document.addEventListener("keydown", async (e) => {
+  if (window.inputMode !== "command") return;
+
+  // Backspace
+  if (e.key === "Backspace") {
+    if (cursorPos > 0) {
+      input = input.slice(0, cursorPos - 1) + input.slice(cursorPos);
+      cursorPos--;
+      renderInputLine();
+    }
+    e.preventDefault();
+    return;
+  }
+
+  // Arrow LEFT
+  if (e.key === "ArrowLeft") {
+    cursorPos = Math.max(0, cursorPos - 1);
+    renderInputLine();
+    e.preventDefault();
+    return;
+  }
+
+  // Arrow RIGHT
+  if (e.key === "ArrowRight") {
+    cursorPos = Math.min(input.length, cursorPos + 1);
+    renderInputLine();
+    e.preventDefault();
+    return;
+  }
+
+  // Enter
+  if (e.key === "Enter") {
+    if (inputLineEl) {
+      inputLineEl.innerHTML = "";
+
+      // Prompt ($ always lime)
+      const promptSpan = document.createElement("span");
+      promptSpan.textContent = "$ ";
+      if (userPermission > 3) promptSpan.style.color = "red";
+      if (userPermission < 4) promptSpan.style.color = "lime";
+      promptSpan.style.backgroundColor = window.theme?.[1] || "black";
+      promptSpan.style.fontSize = window.theme?.[3] || "14px";
+      promptSpan.style.fontFamily = getComputedStyle(document.body).fontFamily;
+      inputLineEl.appendChild(promptSpan);
+
+      // Input text
+      const textSpan = document.createElement("span");
+      textSpan.textContent = input;
+      textSpan.style.color = window.theme?.[0] || "white";
+      textSpan.style.backgroundColor = window.theme?.[1] || "black";
+      textSpan.style.fontSize = window.theme?.[3] || "14px";
+      textSpan.style.fontFamily = getComputedStyle(document.body).fontFamily;
+      inputLineEl.appendChild(textSpan);
+    }
+
+    const newLine = document.createElement("div");
+    screen.appendChild(newLine);
+
+    if (input.trim() !== "") {
+      await executeCommand(input);
+    }
+
+    inputLineEl = null;
+    prompt();
+    return;
+  }
+
+  // Normal characters
+  if (e.key.length === 1) {
+    input = input.slice(0, cursorPos) + e.key + input.slice(cursorPos);
+    cursorPos++;
+    renderInputLine();
+  }
+});
+
+// --------------------
+// Start terminal prompt
+// --------------------
+
+window.prompt = prompt;
+window.executeCommand = executeCommand;
+log("Terminal", "Starting main prompt", true);
+prompt();
+/bin/touch.js
+69
+if (!args || args.length === 0) {
+  write("Usage: touch <filename>\n", "red");
+} else {
+  const filename = args[0];
+
+  // --------------------
+  // Determine full path
+  // --------------------
+  let path;
+  if (filename.startsWith("/")) {
+    path = filename.replace(/\/+/g, "/"); // absolute
+  } else {
+    path = (cwd === "/" ? "/" : cwd + "/") + filename; // relative
+    path = path.replace(/\/+/g, "/");
+  }
+
+  // --------------------
+  // Extract folder path
+  // --------------------
+  const parts = path.split("/");
+  parts.pop(); // remove filename
+  const folderPath = parts.join("/") || "/"; // root if empty
+
+  // --------------------
+  // Helper: get effective write permission recursively
+  // --------------------
+  function getEffectiveWritePermission(folderPath) {
+    const parts = folderPath.split("/").filter(Boolean);
+    let currentPath = "/";
+    let permission = 0; // default
+
+    for (const part of parts) {
+      currentPath = currentPath === "/" ? "/" + part : currentPath + "/" + part;
+      if (fs.meta[currentPath] && fs.meta[currentPath].writepermission !== undefined) {
+        permission = parseInt(fs.meta[currentPath].writepermission);
+      }
+    }
+    return permission;
+  }
+
+  // --------------------
+  // Check folder exists
+  // --------------------
+  if (folderPath !== "/" && !fs.folders.includes(folderPath)) {
+    write(`Error: Folder does not exist: ${folderPath}\n`, "red");
+    return;
+  }
+
+  // --------------------
+  // Check write permission
+  // --------------------
+  const folderWritePerm = getEffectiveWritePermission(folderPath);
+  if (userPermission < folderWritePerm && userPermission !== 4) {
+    write(`Access denied: cannot create file in ${folderPath}\n`, "red");
+    return;
+  }
+
+  // --------------------
+  // Create file
+  // --------------------
+  if (fs.files.hasOwnProperty(path)) {
+    write(`File already exists: ${filename}\n`, "yellow");
+  } else {
+    fs.files[path] = "";
+    write(`Created file: ${filename}\n`, "green");
+
+    if (typeof saveFS1 === "function") await saveFS1();
+  }
+}
+/bin/tree.js
+32
+write("Filesystem tree:\n", "cyan");
+
+// Helper: get effective read permission recursively
+function getEffectiveReadPermission(path) {
+  const parts = path.split("/").filter(Boolean);
+  let currentPath = "/";
+  let permission = 0; // default
+
+  for (const part of parts) {
+    currentPath = currentPath === "/" ? "/" + part : currentPath + "/" + part;
+    if (fs.meta[currentPath] && fs.meta[currentPath].readpermission !== undefined) {
+      permission = parseInt(fs.meta[currentPath].readpermission);
+    }
+  }
+  return permission;
+}
+
+// Print folders
+for (const folder of fs.folders) {
+  const folderReadPerm = getEffectiveReadPermission(folder);
+  if (userPermission >= folderReadPerm || userPermission === 4) {
+    write(folder + "\n", "cyan");
+  }
+}
+
+// Print files
+for (const filePath in fs.files) {
+  const fileReadPerm = getEffectiveReadPermission(filePath);
+  if (userPermission >= fileReadPerm || userPermission === 4) {
+    write(filePath + "\n", "white");
+  }
+}
+/bin/uname.js
+3
+if (args.length === 0) write("Linux\n");
+if (args[0].toLowerCase() == "-a") write("Linux " + hostName + " 6.1.38-chrome12.5-g44bda5e8f6-ab137h7568\n");
+if (args[0].toLowerCase() == "-r") write("6.1.38-chrome12.5-g44bda5e8f6-ab137h7568\n");
+/bin/uptime.js
+1
+write(window.uptime + " up\n");
+/bin/who.js
+3
+write(window.userName + "@" + window.hostName + "\n");
+
+
+/bin/whoami.js
+1
+write(`${userName}@${hostName} Permission level: ${userPermission}\n`, "white");
+/bin/yes.js
+15
+const text = args.join(" ") || "y";
+
+let runningYes = true;
+
+document.addEventListener("keydown", (e) => {
+  if (e.ctrlKey && e.key.toLowerCase() === "c") {
+    runningYes = false;
+    write("^C\n", "red");
+  }
+});
+
+while (runningYes) {
+  write(text + "\n");
+  await wait(10);
+}
+/boot/boot.js
+13
+async function bootSequence() {
+  write("Booting system...\n", "yellow");
+  await wait(2000); // pause 2 seconds
+
+  write("Initializing terminal...\n", "yellow");
+  await wait(1000); // optional pause
+  clear();
+  log("Boot JS", "Attempting to start terminal.js", true);
+  await runFile("/bin/terminal.js");
+}
+
+// Start the sequence
+bootSequence();
+/etc/config.conf
+1
+configfile="/etc/profiles/default.conf"
+/etc/config.js
+77
+// --------------------
+// Load etc\config.conf to get profile path
+// --------------------
+const etcConfigPath = "/etc/config.conf";
+
+let profilePath = null;
+
+if (!fs.files[etcConfigPath]) {
+  write("No /etc/config.conf found, using defaults.\n");
+  profilePath = "/etc/profiles/default.conf";
+} else {
+  const etcLines = fs.files[etcConfigPath].split("\n");
+
+  for (let line of etcLines) {
+    line = line.trim();
+    if (!line || line.startsWith("#")) continue;
+
+    const eq = line.indexOf("=");
+    if (eq === -1) continue;
+
+    const key = line.slice(0, eq).trim();
+    const valueStr = line.slice(eq + 1).trim();
+
+    if (key === "configfile") {
+      try {
+        profilePath = Function(`"use strict"; return (${valueStr});`)();
+      } catch (e) {
+        write("Failed to parse configfile path\n");
+      }
+      break;
+    }
+  }
+}
+
+if (!profilePath) {
+  write("No configfile specified in /etc/config.conf\n");
+} else if (!fs.files[profilePath]) {
+  write(`Profile file not found: ${profilePath}\n`);
+} else {
+  // --------------------
+  // Load actual profile dynamically
+  // --------------------
+  const lines = fs.files[profilePath].split("\n");
+  window.protectedVars = new Set();
+
+  for (let line of lines) {
+    line = line.trim();
+    if (!line || line.startsWith("#")) continue;
+
+    const eq = line.indexOf("=");
+    if (eq === -1) continue;
+
+    const key = line.slice(0, eq).trim();
+    window.protectedVars.add(key);
+    const valueStr = line.slice(eq + 1).trim();
+
+    try {
+      const value = Function(`"use strict"; return (${valueStr});`)();
+      window[key] = value;
+    } catch (e) {
+      write(`Failed to parse line in profile: ${line}\n`);
+    }
+  }
+
+  // --------------------
+  // Create per-session snapshot in \tmp\var.conf
+  // --------------------
+  if (!fs.folders.includes("/tmp")) fs.folders.push("/tmp");
+
+  fs.files["/tmp/var.conf"] = fs.files[profilePath]; // exact same content as profile
+  saveFS1();
+}
+
+// --------------------
+// Config loaded
+// --------------------
+write("Config loaded\n");
+/etc/profiles/default.conf
+13
+cwd="/"
+args=[]
+userPermission=0
+inputMode="command"
+path=["/bin","/usr/bin","/root/bin"]
+font="/usr/share/fonts/Monospace.font"
+osName="Linux"
+browserName="Chrome"
+userName="browser"
+hostName="localhost"
+theme=["white","black","black","14px"]
+pipe=""
+home="/home"
+/krnl/kernel.js
+282
+// --------------------
+// kernel.js
+// --------------------
+const screen = document.getElementById("screen");
+const startTime = Date.now();
+
+// --------------------
+// Output functions
+// --------------------
+function write(text, color, bg) {
+  const defaultColor = "white";
+  const defaultBg = "black";
+
+  color = color || (window.theme ? window.theme[0] : defaultColor);
+  bg = bg || (window.theme ? window.theme[1] : defaultBg);
+
+  screen.style.overflowY = "auto";
+  screen.style.maxHeight = screen.style.maxHeight || "100%"; // fallback if height not set
+
+  for (let char of text) {
+    const span = document.createElement("span");
+    span.textContent = char;
+    span.style.color = color;
+    span.style.backgroundColor = bg;
+    span.style.fontSize = window.theme?.[3] || "14px";
+    screen.appendChild(span);
+  }
+}
+
+function log(header, text, save=false) {
+    const logPath = "/var/syslog.log";
+
+    // Ensure \var folder exists
+    if (!fs.folders.includes("/var")) {
+        fs.folders.push("/var");
+    }
+
+    // Create log file if it doesn't exist
+    if (!fs.files.hasOwnProperty(logPath)) {
+        fs.files[logPath] = "";
+    }
+
+    // Split text into lines and prepend header to each line
+    const lines = text.split("\n");
+    const entry = lines.map(line => `${header}: ${line}`).join("\n") + "\n";
+
+    // Append to log file
+    fs.files[logPath] += entry;
+    if (save) console.log("hi");
+}
+
+function clear() {
+  screen.innerHTML = "";
+}
+
+function newline() {
+  screen.appendChild(document.createElement("br"));
+}
+
+function wait(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function formatTime(ms) {
+  const totalSeconds = Math.floor(ms / 1000);
+  const hours = String(Math.floor(totalSeconds / 3600)).padStart(2, '0');
+  const minutes = String(Math.floor((totalSeconds % 3600) / 60)).padStart(2, '0');
+  const seconds = String(totalSeconds % 60).padStart(2, '0');
+  return `${hours}:${minutes}:${seconds}`;
+}
+
+// --------------------
+// Filesystem & handle (from BIOS)
+// --------------------
+let fs = window.fs || { folders: [], files: {}, meta: {} };
+let fs1FileHandle = window.fs1FileHandle || null;
+
+
+
+// --------------------
+// Parse FS1
+// --------------------
+function parseFS1(text) {
+  const lines = text.split("\n").map(l => l.trim());
+  let i = 0;
+  const parsedFS = { folders: [], files: {}, meta: {} };
+
+  while (i < lines.length) {
+    const line = lines[i];
+    if (line === "--folders") { i++; while(i<lines.length&&!lines[i].startsWith("--")) parsedFS.folders.push(lines[i++]); }
+    else if (line === "--files") {
+      i++; while(i<lines.length&&!lines[i].startsWith("--")){
+        const path=lines[i++], count=parseInt(lines[i++]), content=[];
+        for(let j=0;j<count;j++) content.push(lines[i++]);
+        parsedFS.files[path] = content.join("\n");
+      }
+    } else if(line=="--meta"){
+      i++; while(i<lines.length&&!lines[i].startsWith("--")){
+        const path=lines[i++], count=parseInt(lines[i++]), meta={};
+        for(let j=0;j<count;j++){ const [k,v]=lines[i++].split("="); meta[k.toLowerCase()]=v; }
+        parsedFS.meta[path]=meta;
+      }
+    } else i++;
+  }
+  return parsedFS;
+}
+
+// --------------------
+// Save FS1
+// --------------------
+async function saveFS1() {
+  if (!fs1FileHandle) {
+    write("No FS1 file selected to save.\n", "red");
+    return;
+  }
+
+  const lines = ["fs1", "--folders", ...fs.folders, "--files"];
+  for (const path in fs.files) {
+    const content = fs.files[path].split("\n");
+    lines.push(path);
+    lines.push(content.length.toString());
+    lines.push(...content);
+  }
+
+  lines.push("--meta");
+  for (const path in fs.meta) {
+    const meta = fs.meta[path];
+    const keys = Object.keys(meta);
+    lines.push(path);
+    lines.push(keys.length.toString());
+    for (const k of keys) lines.push(`${k}=${meta[k]}`);
+  }
+  lines.push("--end");
+
+  try {
+    const writable = await fs1FileHandle.createWritable();
+    await writable.write(lines.join("\n"));
+    await writable.close();
+  } catch (e) {
+    write("Failed to save: " + e.message + "\n", "red");
+  }
+}
+
+// --------------------
+// Run FS1 script
+// --------------------
+async function runFile(path) {
+  const code = fs.files[path];
+  if (!code) {
+    log("kernel", "FILE NOT FOUND", true);
+    write("File not found: " + path + "\n","red");
+    return;
+  }
+
+  try {
+    await new Function(`return (async ()=>{ ${code} })();`)();
+  } catch(e) {
+    log("kernel","Error: "+e.message,true);
+    write("Error: "+e.message+"\n","red");
+  }
+}
+
+// --------------------
+// Apply font from FS1 file
+// --------------------
+async function applyFontFromFile() {
+  if (!window.font) return;
+  const path = window.font.replace(/\/+/g, "/");
+  if (!fs.files.hasOwnProperty(path)) {
+    log("kernel","CRITICAL ERROR",true);
+    write("CRITICAL ERROR: Font file not found!\n","yellow","red");
+    throw new Error("Font file not found!");
+  }
+
+  const fontContent = fs.files[path].trim();
+  const styleEl = document.createElement("style");
+  styleEl.innerHTML = `body, #screen { font-family: ${fontContent} !important; }`;
+  document.head.appendChild(styleEl);
+}
+
+// --------------------
+// Start FS1 auto-sync
+// --------------------
+function startFSSync() {
+  setInterval(async()=>{
+    if(!fs1FileHandle) return;
+    try{
+      const file = await fs1FileHandle.getFile();
+      const fs1Content = await file.text();
+      const newFS = parseFS1(fs1Content);
+
+      fs.folders.length=0; fs.folders.push(...newFS.folders);
+      for(const k in fs.files) delete fs.files[k]; for(const k in newFS.files) fs.files[k]=newFS.files[k];
+      for(const k in fs.meta) delete fs.meta[k]; for(const k in newFS.meta) fs.meta[k]=newFS.meta[k];
+    } catch(e) {
+      log("kernel","FS1 SYNC FAILED",true);
+      write("[FS1 sync failed: "+e.message+"]\n","red");
+    }
+  },5000);
+}
+
+// --------------------
+// Kernel input for superuser password
+// --------------------
+async function requestSuperuserPassword(callback) {
+  window.inputMode = "password";
+  write("Superuser password: ","yellow");
+
+  let buffer = "";
+  const inputSpan = document.createElement("span");
+  screen.appendChild(inputSpan);
+
+  const handler = async e => {
+    if(e.key==="Backspace"){ if(buffer.length>0){ buffer=buffer.slice(0,-1); inputSpan.lastChild?.remove(); } e.preventDefault(); return; }
+    if(e.key==="Enter"){ newline(); document.removeEventListener("keydown",handler); await callback(buffer); window.inputMode="command"; return; }
+    if(e.key.length===1){ buffer+=e.key; inputSpan.appendChild(document.createTextNode("*")); }
+  };
+  document.addEventListener("keydown",handler);
+}
+
+// --------------------
+// Kernel boot
+// --------------------
+async function boot() {
+  clear();
+  write("Booting FS1 from BIOS...\n","gray");
+  log("Boot","Starting boot process");
+
+  // Use FS1 loaded by BIOS
+  fs = window.fs;
+  fs1FileHandle = window.fs1FileHandle;
+
+  window.__blacklist = new Set();
+  Object.keys(window).forEach(k=>window.__blacklist.add(k));
+
+  // Remove temporary files
+  for(const path in fs.files) if(path.startsWith("/tmp/") && path!="/tmp/") delete fs.files[path];
+
+
+  // Run config if exists
+  if(fs.files["/etc/config.js"]){ log("Boot","Running config.js"); await runFile("/etc/config.js"); }
+
+  await applyFontFromFile();
+
+  // Superuser password
+  if(!fs.meta["/etc"]?.[".superuser"]){
+    log("Boot","Requesting superuser password");
+    if(!fs.meta["/etc"]) fs.meta["/etc"]={};
+    await new Promise(res=>{ requestSuperuserPassword(async pw=>{ fs.meta["/etc"][".superuser"]=pw; write("\nSuperuser password set!\n","green"); await saveFS1(); res(); }); });
+  }
+
+  // Start FS1 sync
+  // startFSSync();
+
+  document.body.style.backgroundColor = window.theme?.[2] || "black";
+  log("Boot","Running /boot/boot.js",true);
+  await runFile("/boot/boot.js"); // start user terminal
+}
+
+// --------------------
+// Expose functions globally
+// --------------------
+window.write = write;
+window.clear = clear;
+window.newline = newline;
+window.fs = fs;
+window.runFile = runFile;
+window.wait = wait;
+window.saveFS1 = saveFS1;
+window.boot = boot;
+window.log = log;
+window.requestSuperuserPassword = requestSuperuserPassword;
+
+// --------------------
+// Show uptime
+// --------------------
+setInterval(()=>{
+  const elapsed = Date.now() - startTime;
+  window.uptime = formatTime(elapsed);
+},1000);
+
+boot();
+/krnl/WARNING
+1
+Editing "kernel.js" will brick your system!
+/root/bin/reboot.js
+10
+if (userPermission != 4) {
+    write("ERROR: Reboot must be run as superuser!\n");
+    return;
+}
+clear();
+write("Rebooting system...\n", "yellow");
+log("REBOOT", "Rebooting system at uptime " + window.uptime + " " + Date.now().toString())
+saveFS1();
+await wait(1000);
+location.reload();
+/usr/bin/lolcat.js
+36
+if (!window.pipe || !window.pipe.length) {
+  write("Usage: <text> | lolcat\n", "red");
+  return;
+}
+
+const text = window.pipe;
+const lines = text.split("\n");
+
+// Gradient: bright green -> bright cyan
+const startColor = { r: 0, g: 255, b: 0 };
+const endColor   = { r: 0, g: 255, b: 255 };
+
+function lerp(start, end, t) {
+  return Math.round(start + (end - start) * t);
+}
+
+// For each line
+for (let li = 0; li < lines.length; li++) {
+  const line = lines[li];
+  const lineLength = line.length;
+
+  for (let i = 0; i < lineLength; i++) {
+    // Raise t to 0.5 to accelerate interpolation
+    let t = i / Math.max(lineLength - 1, 1);
+    t = Math.pow(t, 0.5); // faster gradient
+
+    const r = lerp(startColor.r, endColor.r, t);
+    const g = lerp(startColor.g, endColor.g, t);
+    const b = lerp(startColor.b, endColor.b, t);
+
+    write(line[i], `rgb(${r},${g},${b})`);
+  }
+
+  write("\n");
+}
+
+/usr/bin/neofetch.js
+48
+// neofetch.js
+// --------------------
+// Display system info
+// --------------------
+const osName = window.osName;
+const browserName = window.browserName;
+const userName = window.userName;
+const hostName = window.hostName;
+const cwdDisplay = cwd || "\\";
+
+const terminalWidth = 50; // width of the ASCII box
+
+// --------------------
+// Helper: pad string
+// --------------------
+function pad(str, length) {
+  return str + " ".repeat(Math.max(0, length - str.length));
+}
+
+// --------------------
+// ASCII logo (simple)
+const logo = [
+  "  _      ____  ____  ______",
+  " | |    / __ \\/ __ \\/ ____/",
+  " | |   / / / / / / / __/   ",
+  " | |__/ /_/ / /_/ / /___   ",
+  " |____/\\____/\\____/_____/  "
+];
+
+// --------------------
+// Info lines
+const infoLines = [
+  `User: ${userName}@${hostName}`,
+  `OS: ${osName}`,
+  `Browser: ${browserName}`,
+  `CWD: ${cwdDisplay}`,
+  `Date: ${new Date().toLocaleString()}`
+];
+
+// --------------------
+// Display
+for (let i = 0; i < Math.max(logo.length, infoLines.length); i++) {
+  let logoPart = logo[i] || "";
+  let infoPart = infoLines[i] || "";
+  write(pad(logoPart, terminalWidth) + " " + infoPart + "\n", "cyan");
+}
+
+newline();
+/usr/share/fonts/Monospace.font
+1
+monospace
+/usr/share/fonts/TimesNewRoman.font
+1
+'Times New Roman', Times, serif
+/var/syslog.log
+3
+Boot: Starting boot process
+Boot: Running config.js
+
+/tmp/var.conf
+13
+cwd="/"
+args=[]
+userPermission=0
+inputMode="command"
+path=["/bin","/usr/bin","/root/bin"]
+font="/usr/share/fonts/Monospace.font"
+osName="Linux"
+browserName="Chrome"
+userName="browser"
+hostName="localhost"
+theme=["white","black","black","14px"]
+pipe=""
+home="/home"
+--meta
+/bin
+2
+writepermission=2
+readpermission=0
+/boot
+2
+writepermission=3
+readpermission=3
+/etc
+2
+writepermission=3
+readpermission=3
+/root
+2
+writepermission=4
+readpermission=4
+/usr/share/fonts
+2
+writepermission=2
+readpermission=0
+/usr/bin
+2
+writepermission=2
+readpermission=0
+/var
+2
+writepermission=1
+readpermission=0
+/krnl
+2
+writepermission=4
+readpermission=4
+--end
