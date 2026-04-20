@@ -30,7 +30,7 @@
   <div id="content">Loading...</div>
 
   <script>
-    fetch("home.md")
+    fetch("./home.md")
       .then(res => {
         if (!res.ok) throw new Error("Failed to load home.md");
         return res.text();
