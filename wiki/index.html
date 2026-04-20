@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>BrowserLinux Wiki</title>
+
+  <style>
+    body {
+      margin: 0;
+      background: #0b0b0b;
+      color: #eaeaea;
+      font-family: Arial, sans-serif;
+      padding: 20px;
+    }
+
+    #content {
+      max-width: 900px;
+      margin: auto;
+      line-height: 1.6;
+    }
+
+    a { color: #4ea1ff; }
+    code { background: #222; padding: 2px 4px; }
+  </style>
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+</head>
+
+<body>
+
+  <div id="content">Loading...</div>
+
+  <script>
+    fetch("home.md")
+      .then(res => {
+        if (!res.ok) throw new Error("Failed to load home.md");
+        return res.text();
+      })
+      .then(md => {
+        document.getElementById("content").innerHTML =
+          marked.parse(md);
+      })
+      .catch(err => {
+        document.getElementById("content").innerHTML =
+          "<h1>Error loading home.md</h1><p>" + err + "</p>";
+      });
+  </script>
+
+</body>
+</html>
