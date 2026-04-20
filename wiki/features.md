@@ -8,7 +8,7 @@ To view the configuration:
 sudo -s
 nano /etc/profiles/default.conf
 ````
-![](https://github.com/VRDog28/BrowserLinux/blob/main/screenshots/screenshot8.jpg)
+![](https://raw.githubusercontent.com/VRDog28/BrowserLinux/main/screenshots/screenshot8.jpg)
 
 ### 📢 Example config:
 
