@@ -2,7 +2,7 @@
 
 Press delete on the continue screen to enter the bios utility  
 
-![](https://github.com/VRDog28/BrowserLinux/blob/main/screenshots/screenshot7.jpg)
+![](https://raw.githubusercontent.com/VRDog28/BrowserLinux/main/screenshots/screenshot7.jpg)
 
 Use the arrow keys and enter to navigate!  
 
