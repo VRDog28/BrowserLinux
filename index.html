@@ -2,8 +2,14 @@
 <html>
 <head>
   <meta charset="UTF-8">
+  <meta property="og:site_name" content="Browser Linux">
+
   <title>Browser Linux</title>
+
+  <meta name="description" content="Browser Linux is a browser based terminal system fully coded in javascript">
+
   <link rel="icon" type="image/x-icon" href="favicon.ico">
+
   <style>
     body {
       margin: 0;
@@ -16,10 +22,32 @@
       padding: 10px;
       white-space: pre-wrap;
     }
+    #seo {
+      padding: 20px;
+    }
   </style>
 </head>
+
 <body>
+
+  <div id="seo">
+    <h1>Browser Linux</h1>
+    <p>
+      Browser Linux is a browser-based online system with a filesystem, firmware, kernel, terminal all customizable.
+      Press D to immediately start or view the wiki! (vrdog28.github.io/BrowserLinux/wiki)
+    </p>
+  </div>
   <div id="screen"></div>
+
+  <script>
+    window.addEventListener("load", () => {
+      setTimeout(() => {
+        document.getElementById("seo").style.display = "none";
+      }, 100); 
+    });
+  </script>
+
   <script src="bios.js"></script>
+
 </body>
 </html>
