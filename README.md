@@ -1,7 +1,7 @@
 # BrowserLinux
 Your own linux distro running in your browser  
 ==> https://vrdog28.github.io/BrowserLinux
-# Screenshots!
+## Screenshots!
 
 ![](https://github.com/VRDog28/BrowserLinux/blob/main/screenshots/screenshot10.png)
 ![](https://github.com/VRDog28/BrowserLinux/blob/main/screenshots/screenshot5.png)
