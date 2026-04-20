@@ -1,47 +1,112 @@
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
   <meta charset="UTF-8">
   <title>BrowserLinux Wiki</title>
 
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+
   <style>
     body {
       margin: 0;
+      display: flex;
       background: #0b0b0b;
-      color: #eaeaea;
-      font-family: Arial, sans-serif;
-      padding: 20px;
+      color: white;
+      font-family: Arial;
+    }
+
+    #sidebar {
+      width: 220px;
+      background: #111;
+      height: 100vh;
+      padding: 10px;
+      box-sizing: border-box;
+    }
+
+    .item {
+      padding: 10px;
+      margin-bottom: 5px;
+      background: #1a1a1a;
+      cursor: pointer;
+      border-radius: 4px;
+      text-transform: capitalize;
+    }
+
+    .item:hover {
+      background: #2a2a2a;
+    }
+
+    .active {
+      background: #3a3a3a;
+      font-weight: bold;
     }
 
     #content {
-      max-width: 900px;
-      margin: auto;
-      line-height: 1.6;
+      flex: 1;
+      padding: 20px;
+      overflow-y: auto;
     }
-
-    a { color: #4ea1ff; }
-    code { background: #222; padding: 2px 4px; }
   </style>
-  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 </head>
 
 <body>
 
+  <div id="sidebar"></div>
   <div id="content">Loading...</div>
 
   <script>
-    fetch("./home.md")
-      .then(res => {
-        if (!res.ok) throw new Error("Failed to load home.md");
-        return res.text();
-      })
-      .then(md => {
-        document.getElementById("content").innerHTML =
-          marked.parse(md);
-      })
-      .catch(err => {
-        document.getElementById("content").innerHTML =
-          "<h1>Error loading home.md</h1><p>" + err + "</p>";
+    let current = null;
+
+    function loadPage(name) {
+      const file = name + ".md"; // 👈 AUTO ADD .md
+
+      fetch("./" + file)
+        .then(r => {
+          if (!r.ok) throw new Error("Missing " + file);
+          return r.text();
+        })
+        .then(md => {
+          document.getElementById("content").innerHTML =
+            marked.parse(md);
+
+          current = name;
+          updateActive();
+        })
+        .catch(err => {
+          document.getElementById("content").innerHTML =
+            "<h1>Error</h1><p>" + err + "</p>";
+        });
+    }
+
+    function updateActive() {
+      document.querySelectorAll(".item").forEach(el => {
+        el.classList.remove("active");
+        if (el.dataset.name === current) {
+          el.classList.add("active");
+        }
+      });
+    }
+
+    fetch("pages.json")
+      .then(r => r.json())
+      .then(list => {
+        const sidebar = document.getElementById("sidebar");
+
+        list.forEach(name => {
+          const div = document.createElement("div");
+          div.className = "item";
+          div.innerText = name;
+          div.dataset.name = name;
+
+          div.onclick = () => loadPage(name);
+
+          sidebar.appendChild(div);
+        });
+
+        // load first page automatically
+        if (list.length > 0) {
+          loadPage(list[0]);
+        }
       });
   </script>
 
