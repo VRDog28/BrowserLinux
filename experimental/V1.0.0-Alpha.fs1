@@ -20,7 +20,7 @@ fs1
 /usr/share/fonts
 --files
 /bin/bash
-1
+2
 write("how tf did you run this file");
 // Note: this was early development and nothing here resembles how i make Versions now!
 /bin/cat.js
