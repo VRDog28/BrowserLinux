@@ -8,46 +8,201 @@
 
   <meta name="description" content="Browser Linux is a browser based terminal system fully coded in javascript">
 
-  <link rel="icon" type="image/x-icon" href="favicon.ico">
+  <link rel="apple-touch-icon-precomposed" sizes="57x57" href="apple-touch-icon-57x57.png" />
+  <link rel="apple-touch-icon-precomposed" sizes="114x114" href="apple-touch-icon-114x114.png" />
+  <link rel="apple-touch-icon-precomposed" sizes="72x72" href="apple-touch-icon-72x72.png" />
+  <link rel="apple-touch-icon-precomposed" sizes="144x144" href="apple-touch-icon-144x144.png" />
+  <link rel="apple-touch-icon-precomposed" sizes="60x60" href="apple-touch-icon-60x60.png" />
+  <link rel="apple-touch-icon-precomposed" sizes="120x120" href="apple-touch-icon-120x120.png" />
+  <link rel="apple-touch-icon-precomposed" sizes="76x76" href="apple-touch-icon-76x76.png" />
+  <link rel="apple-touch-icon-precomposed" sizes="152x152" href="apple-touch-icon-152x152.png" />
+  <link rel="icon" type="image/png" href="favicon-196x196.png" sizes="196x196" />
+  <link rel="icon" type="image/png" href="favicon-96x96.png" sizes="96x96" />
+  <link rel="icon" type="image/png" href="favicon-32x32.png" sizes="32x32" />
+  <link rel="icon" type="image/png" href="favicon-16x16.png" sizes="16x16" />
+  <link rel="icon" type="image/png" href="favicon-128.png" sizes="128x128" />
+  <meta name="application-name" content="&nbsp;"/>
+  <meta name="msapplication-TileColor" content="#FFFFFF" />
+  <meta name="msapplication-TileImage" content="mstile-144x144.png" />
+  <meta name="msapplication-square70x70logo" content="mstile-70x70.png" />
+  <meta name="msapplication-square150x150logo" content="mstile-150x150.png" />
+  <meta name="msapplication-wide310x150logo" content="mstile-310x150.png" />
+  <meta name="msapplication-square310x310logo" content="mstile-310x310.png" />
 
   <style>
-    body {
-      margin: 0;
-      background: black;
-      color: white;
-      font-family: Arial, Helvetica, sans-serif;
-    }
+      body {
+        margin: 0;
+        padding: 40px 20px;
+        font-family: Arial, Helvetica, sans-serif;
+        background: #0f0f0f;
+        color: #eaeaea;
+        line-height: 1.6;
+      }
 
-    #screen {
-      padding: 10px;
-      white-space: pre-wrap;
-    }
-    #seo {
-      padding: 20px;
-    }
+      h1 {
+        font-size: 42px;
+        margin-bottom: 10px;
+        letter-spacing: 1px;
+      }
+
+      p {
+        max-width: 700px;
+        color: #cfcfcf;
+      }
+
+      section {
+        margin-top: 40px;
+        max-width: 700px;
+      }
+
+      h2 {
+        font-size: 22px;
+        margin-bottom: 10px;
+        color: #ffffff;
+      }
+
+      ul {
+        padding-left: 20px;
+      }
+
+      li {
+        margin-bottom: 6px;
+      }
+
+      a {
+        color: #ffffff;
+        text-decoration: none;
+      }
+
+      a:hover {
+        text-decoration: underline;
+      }
+
+      /* Start button */
+      .start-btn {
+        display: inline-block;
+        margin-top: 15px;
+        padding: 12px 18px;
+        background: #ffffff;
+        color: #000000;
+        font-weight: bold;
+        border-radius: 6px;
+        transition: 0.2s ease;
+      }
+
+      .start-btn:hover {
+        background: #cccccc;
+      }
+
+      /* Navigation */
+      nav {
+        margin-top: 50px;
+        padding-top: 20px;
+        border-top: 1px solid #333;
+      }
+
+      nav a {
+        margin-right: 15px;
+        color: #bbbbbb;
+      }
+
+      nav a:hover {
+        color: #ffffff;
+      }
+
+      /* Subtle terminal vibe */
+      body::before {
+        content: "Browser Linux // boot loader";
+        position: fixed;
+        top: 10px;
+        left: 10px;
+        font-size: 12px;
+        color: #444;
+      }
   </style>
 </head>
 
 <body>
 
-  <div id="seo">
-    <h1>Browser Linux</h1>
-    <p>
-      Browser Linux is a browser-based online system with a filesystem, firmware, kernel, terminal all customizable.
-      Press D to immediately start or view the wiki! (vrdog28.github.io/BrowserLinux/wiki)
-    </p>
-  </div>
-  <div id="screen"></div>
+<h1 id="title">Browser Linux<span id="cursor">█</span></h1>
+<p>A JavaScript-based terminal operating system running entirely in your browser.</p>
 
-  <script>
-    window.addEventListener("load", () => {
-      setTimeout(() => {
-        document.getElementById("seo").style.display = "none";
-      }, 100); 
-    });
-  </script>
+<a href="app.html" class="start-btn">Start Terminal</a>
 
-  <script src="bios.js"></script>
+<p style="font-size: 13px; opacity: 0.8;">
+  Boot options inside: Press <b>D</b> for cloud system or <b>Enter</b> for local file
+</p>
 
+<section>
+  <h2>What is this?</h2>
+  <p>
+    Browser Linux simulates a Linux environment with a virtual filesystem,
+    shell commands, and system behavior all in JavaScript.
+  </p>
+</section>
+<section>
+<h2>Features</h2>
+<ul>
+  <li>Browser-based terminal</li>
+  <li>Virtual filesystem</li>
+  <li>Custom command system</li>
+  <li>No installation required</li>
+</ul>
+</section>
+<section>
+  <h2>Getting Started</h2>
+
+  <p>
+    Browser Linux has two startup options depending on your device and setup.
+  </p>
+
+  <ul>
+    <li><b>Press D</b> -> Load the latest default system file (main.fs1) from GitHub</li>
+    <li><b>Press Enter</b> -> Select your own local main.fs1 file (recommended for saving your system)</li>
+  </ul>
+
+  <p>
+    Use <b>D</b> for quick access on devices without a file picker.
+    Use <b>Enter</b> if you want a persistent personal system file.
+  </p>
+
+  <a href="https://github.com/VRDog28/BrowserLinux/releases/latest/download/main.fs1">
+  Download Latest main.fs1
+
+</a>
+</section>
+<nav>
+  <a href="app.html">Terminal</a>
+  <a href="wiki/index.html">Docs</a>
+  <a href="https://github.com/VRDog28/BrowserLinux">GitHub</a>
+</nav>
 </body>
+
+<script>
+const titleEl = document.getElementById("title");
+
+let text = "Browser Linux";
+let cursorVisible = true;
+
+// blink cursor (hard blink, no fade)
+setInterval(() => {
+  cursorVisible = !cursorVisible;
+  document.getElementById("cursor").style.visibility =
+    cursorVisible ? "visible" : "hidden";
+}, 500);
+
+// typing logic
+document.addEventListener("keydown", (e) => {
+  if (e.key.length === 1) {
+    text += e.key;
+  }
+
+  if (e.key === "Backspace") {
+    text = text.slice(0, -1);
+  }
+
+  titleEl.innerHTML = text + '<span id="cursor">█</span>';
+});
+</script>
+
 </html>
