@@ -1,3 +1,4 @@
+// Little sneak peek of V2.0.0 :D
 const screen = document.getElementById("screen");
 let sda = null;
 let bios = false;
