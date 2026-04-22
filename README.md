@@ -4,9 +4,8 @@ Your own linux distro running in your browser
 ## Screenshots!
 
 ![](https://github.com/VRDog28/BrowserLinux/blob/main/screenshots/screenshot10.png)
-![](https://github.com/VRDog28/BrowserLinux/blob/main/screenshots/screenshot5.png)
-![](https://github.com/VRDog28/BrowserLinux/blob/main/screenshots/screenshot6.png)
-![](https://github.com/VRDog28/BrowserLinux/blob/main/screenshots/screenshot7.jpg)
+![](https://github.com/VRDog28/BrowserLinux/blob/main/screenshots/screenshot12.png)
+![](https://github.com/VRDog28/BrowserLinux/blob/main/screenshots/screenshot11.jpg)
 ### WIKI
 https://github.com/VRDog28/BrowserLinux/wiki
 ### Guide on how to run on any device
