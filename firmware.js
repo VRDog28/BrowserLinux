@@ -1,4 +1,3 @@
-// Little sneak peek of V2.0.0 :D
 const screen = document.getElementById("screen");
 let sda = null;
 let bios = false;
@@ -18,11 +17,9 @@ function write(text, color, bg) {
         screen.appendChild(span);
     }
 }
-
 function wait(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
 }
-
 function parseFS1(text) {
     const lines = text.split("\n").map(l => l.trimEnd());
     let i = 0;
@@ -88,12 +85,10 @@ async function pickFS1() {
 }
 async function loadFS1FromURL() {
     const url = "https://raw.githubusercontent.com/VRDog28/BrowserLinux/refs/heads/main/main.fs1";
-
     const res = await fetch(url);
     if (!res.ok) {
         throw new Error("Failed to fetch FS1");
     }
-
     return await res.text();
 }
 async function checkSHA256(path, expectedHash) {
@@ -111,7 +106,7 @@ async function checkSHA256(path, expectedHash) {
 async function runFile(path) {
     const code = window.fs.files[path];
     if (!code) {
-        write("BIOS: File not found: " + path + "\n");
+        write("Firmware: File not found: " + path + "\n");
         return;
     }
 
@@ -121,25 +116,55 @@ async function runFile(path) {
         write("Error running " + path + ": " + e.message + "\n");
     }
 }
+async function minimalSave() {
+    if (!fs1FileHandle) return;
+    const lines = ["fs1", "--folders", ...fs.folders, "--files"];
+        for (const path in fs.files) {
+            const content = fs.files[path].split("\n");
+            lines.push(path);
+            lines.push(content.length.toString());
+            lines.push(...content);
+        }
+        lines.push("--meta");
+        for (const path in fs.meta) {
+            const meta = fs.meta[path];
+            const keys = Object.keys(meta);
+            lines.push(path);
+            lines.push(keys.length.toString());
+            for (const k of keys) lines.push(`${k}=${meta[k]}`);
+        }
+        lines.push("--end");
 
-async function verifyKernel() {
-    const krnlhash = "751cdb9aaa565b9b8c371a314c1266a0eab9ed5b4beca0352d8066b58f4eb0fc";
+        try {
+            const writable = await fs1FileHandle.createWritable();
+            await writable.write(lines.join("\n"));
+            await writable.close();
+        } catch (e) {
+            write("firmware: Failed to save: " + e.message + "\n");
+        }
+}
+async function verifyKernel(silent = false) {
+    const krnlhash = ["8c70611e83dad60635dcdd4d906a182372106ff416875f5e62c18c1962b14dfb", "751cdb9aaa565b9b8c371a314c1266a0eab9ed5b4beca0352d8066b58f4eb0fc"];
+    let match = false
+    for (hash of krnlhash) {
+        match = await checkSHA256("/krnl/kernel.js", hash);
+        if (match) break;
+    }
 
-    const match = await checkSHA256("/krnl/kernel.js", krnlhash);
-
-    if (!match) {
+    if (!match && !silent) {
         screen.innerHTML = "";
         write(
-            "Your kernel has been modified and is unsafe to run. Contact your BIOS Manufacturer for support!\n",
+            "Your kernel has been modified and is unsafe to run. Contact your Firmware Manufacturer for support!\n",
             "red"
         );
+        return false;
+    } else if (!match) {
         return false;
     }
     return true;
 }
 async function startBIOS() {
     screen.innerHTML = "";
-    write("Browser Linux V2.0.0..");
     let enterBIOS = false;
 
     const biosListener = (e) => {
@@ -149,12 +174,33 @@ async function startBIOS() {
     };
 
     document.addEventListener("keydown", biosListener);
-
+    write(`
+  _           _          ______ _                                      
+ | |         | |        |  ____(_)                                     
+ | |     __ _| | _____  | |__   _ _ __ _ __ _____      ____ _ _ __ ___ 
+ | |    / _\` | |/ / _ \\ |  __| | | '__| '_ \` _ \\ \\ /\\ / / _\` | '__/ _ \\
+ | |___| (_| |   <  __/ | |    | | |  | | | | | \\ V  V / (_| | | |  __/
+ |______\\__,_|_|\\_\\___| |_|    |_|_|  |_| |_| |_|\\_/\\_/ \\__,_|_|  \\___|
+`);
+    write("\n");
+    await wait(250);
+    write("Lake Bios (c) 2026 Browser Linux\n");
+    await wait(1000);
+    write("BIOS DATE: 21/4/2026\n");
+    write("CPU: Unknown\n");
+    await wait(100);
+    write("Memory: 500MB\n");
+    await wait(100);
+    write("Press B to enter BIOS\n");
+    await wait(100);
+    write("Press CTRL and R to restart\n");
+    await wait(500);
+    write(`Detected OS version: ${window.version || "Unknown"}\n`)
+    write("Storage device configured\n")
     await wait(2500);
 
     document.removeEventListener("keydown", biosListener);
 
-    screen.innerHTML = "";
 
     if (enterBIOS) {
         BIOS();
@@ -165,8 +211,70 @@ async function startBIOS() {
         const ok = await verifyKernel();
         if (!ok) return;
     }
-    screen.innerHTML = "";
     runFile("/krnl/kernel.js");
+}
+
+async function recoveryMode(list = []) {
+    let mode = "user";
+    if (list.length != 0) mode = "fix";
+    screen.innerHTML = "";
+    write("Preparing device for recovery\n");
+    if (!window.fs || !window.fs.files || !window.fs.folders || !window.fs.meta || fs1Text == null) {
+        write("Could not recover device\n");
+        await wait(3000);
+        return;
+    }
+    if (!window.fs.files["/dev/sda"] || window.fs.files["/dev/sda"].length < "10") {
+        write("Could not recover device\n");
+        await wait(3000);
+        return;
+    }
+    const sdafs = parseFS1(window.fs.files["/dev/sda"]);
+    if (mode == "user") {
+        const krnlcheck = await verifyKernel(true);
+        if (!krnlcheck) list.push("/krnl/kernel.js");
+        const cfg = !window.fs.files["/etc/profiles/default.conf"] || window.fs.files["/etc/profiles/default.conf"].trim().length == 0;
+        if (cfg) list.push("/etc/profiles/default.conf");
+        const sap = !window.fs.files["/krnl/sound/sap.js"] || window.fs.files["/krnl/sound/sap.js"].trim().length == 0;
+        if (sap) list.push("/krnl/sound/sap.js");
+        const dump = !window.fs.files["/etc/dump.js"] || window.fs.files["/etc/dump.js"].trim().length == 0;
+        if (dump) list.push("/etc/dump.js");
+        const font = !window.fs.files["/usr/share/fonts/Monospace.font"] || window.fs.files["/usr/share/fonts/Monospace.font"].trim().length == 0;
+        if (font) list.push("/usr/share/fonts/Monospace.font");
+        const boot = !window.fs.files["/boot/boot.js"] || window.fs.files["/boot/boot.js"].trim().length == 0;
+        if (boot) list.push("/boot/boot.js");
+        const terminal = !window.fs.files["/bin/terminal.js"] || window.fs.files["/bin/terminal.js"].trim().length == 0;
+        if (terminal) list.push("/bin/terminal.js");
+        const bash = !window.fs.files["/bin/bash.js"] || window.fs.files["/bin/bash.js"].trim().length == 0;
+        if (bash) list.push("/bin/bash.js");
+
+    }
+    await wait(3000);
+    write("Detected issues:\n");
+    if (list.length == 0) write("none\n");
+    for (issue of list) {
+        write(issue + "\n");
+    }
+    await wait(1000);
+    write("Recovering device\n");
+    let rebuild = sdafs.folders;
+    for (folder of rebuild) {
+        if (!window.fs.folders.includes(folder)) {
+            window.fs.folders.push(folder)
+        }
+    }
+    if (list.length != 0) {
+        for (file of list) {
+            if (!sdafs.files[file]) continue;
+            window.fs.files[file] = sdafs.files[file];
+        }
+    }
+    await wait(3000);
+    write("done\n");
+    minimalSave();
+    await wait(3000);
+    boot();
+    return;
 }
 
 async function BIOS() {
@@ -176,115 +284,135 @@ async function BIOS() {
         "Disable kernel checksum",
         "Reload BIOS",
         "Exit",
-        "Recovery Mode (restore FS1 from .rcvr)"
+        "Recovery Mode"
     ];
 
-    const screenWidth = 60;
-    const screenHeight = 21;
+    bios = true;
+    screen.innerHTML = "";
 
-    function center(text) {
-        const pad = Math.floor((screenWidth - text.length) / 2);
-        return " ".repeat(pad) + text + " ".repeat(screenWidth - pad - text.length);
-    }
+    const biosUI = document.createElement("div");
+    biosUI.style.position = "fixed";
+    biosUI.style.inset = "0";
+    biosUI.style.width = "100vw";
+    biosUI.style.height = "100vh";
+    biosUI.style.background = "rgb(0, 0, 0)";
+    biosUI.style.fontFamily = '"ClassicConsole", monospace';
+    biosUI.style.zIndex = "999999999";
+
+    document.body.appendChild(biosUI);
+
+    const container = document.createElement("div");
+    container.style.width = "100%";
+    container.style.height = "100%";
+    container.style.display = "flex";
+    container.style.background = "rgb(0, 0, 0)"
+    container.style.flexDirection = "column";
+    container.style.alignItems = "center";
+    container.style.justifyContent = "center";
+
+    biosUI.appendChild(container);
 
     function render() {
-        screen.innerHTML = "";
+        container.innerHTML = "";
 
-        const totalContentHeight = 2 + 1 + options.length + 1;
-        const topPadding = Math.floor((screenHeight - totalContentHeight) / 2);
+        const box = document.createElement("div");
+        box.style.width = "900px";
+        box.style.maxWidth = "95vw";
+        box.style.border = "2px solid rgb(192, 192, 192)";
+        box.style.background = "rgb(170,170,170)";
+        box.style.position = "relative";
 
-        write(center("Lake BIOS Setup Utility") + "\n", "white", "rgb(3, 3, 238)");
-        write(center("Boot") + "\n", "white", "rgb(3, 3, 238)");
+        const header = document.createElement("div");
+        header.textContent = "Lake BIOS Setup Utility";
+        header.style.background = "rgb(3,3,238)";
+        header.style.color = "white";
+        header.style.textAlign = "center";
+        header.style.padding = "6px";
 
-        write(" ".repeat(screenWidth) + "\n", "white", "rgb(170,170,170)");
-        write(" ".repeat(screenWidth) + "\n", "white", "rgb(170,170,170)");
-        write(" ".repeat(screenWidth) + "\n", "white", "rgb(170,170,170)");
-        write(" ".repeat(screenWidth) + "\n", "white", "rgb(170,170,170)");
-        write(" ".repeat(screenWidth) + "\n", "white", "rgb(170,170,170)");
+        const sub = document.createElement("div");
+        sub.textContent = "System Boot Manager";
+        sub.style.background = "rgb(3,3,238)";
+        sub.style.color = "white";
+        sub.style.textAlign = "center";
+        sub.style.padding = "4px";
+
+        box.appendChild(header);
+        box.appendChild(sub);
 
         options.forEach((opt, i) => {
-            const prefix = (i === selected ? "> " : "  ");
-            let text = prefix + opt;
+            const row = document.createElement("div");
 
-            const pad = Math.floor((screenWidth - text.length) / 2);
-            const line =
-                " ".repeat(pad) +
-                text +
-                " ".repeat(screenWidth - pad - text.length);
+            row.textContent = (i === selected ? "> " : "  ") + opt;
 
-            if (i === selected) {
-                write(line + "\n", "black", "rgb(210,210,210)");
-            } else {
-                write(line + "\n", "white", "rgb(170,170,170)");
-            }
+            row.style.padding = "6px";
+            row.style.background = i === selected
+                ? "rgb(210,210,210)"
+                : "rgb(170,170,170)";
+            row.style.color = i === selected ? "black" : "white";
+
+            box.appendChild(row);
         });
 
-        write(" ".repeat(screenWidth) + "\n", "white", "rgb(170,170,170)");
+        const footer = document.createElement("div");
+        footer.textContent = "↑ ↓ Navigate   ENTER Select";
+        footer.style.position = "absolute";
+        footer.style.bottom = "5px";
+        footer.style.left = "50%";
+        footer.style.transform = "translateX(-50%)";
+        footer.style.color = "black";
 
-        const used =
-            topPadding +
-            totalContentHeight;
+        box.appendChild(footer);
 
-        for (let i = used; i < screenHeight; i++) {
-            write(" ".repeat(screenWidth) + "\n", "white", "rgb(170,170,170)");
-        }
-        write(" ".repeat(screenWidth) + "\n", "white", "rgb(3, 3, 238)");
-        write(" ".repeat(screenWidth) + "\n", "white", "rgb(3, 3, 238)");
+        container.appendChild(box);
     }
 
-    async function handleSelect(index) {
-        switch (index) {
+    async function exitBIOS() {
+        document.removeEventListener("keydown", handler);
+
+        biosUI.remove();
+
+        document.documentElement.style.overflow = "";
+        document.body.style.margin = "";
+        document.body.style.padding = "";
+        document.body.style.background = "";
+
+        bios = false;
+
+        boot();
+    }
+
+    async function handleSelect(i) {
+        switch (i) {
             case 0:
                 window.skipKernelCheck = true;
-                screen.innerHTML = "";
-                document.removeEventListener("keydown", handler);
-                bios = false;
-                boot();
+                await exitBIOS();
                 return;
+
             case 1:
                 location.reload();
                 return;
+
             case 2:
-                screen.innerHTML = "";
-                document.removeEventListener("keydown", handler);
-                bios = false;
-                boot();
+                await exitBIOS();
                 return;
+
             case 3:
-                await enterRecoveryMode();
-                break;
+                document.removeEventListener("keydown", handler);
+
+                biosUI.remove();
+
+                document.documentElement.style.overflow = "";
+                document.body.style.margin = "";
+                document.body.style.padding = "";
+                document.body.style.background = "";
+
+                bios = false;
+                await recoveryMode();
+                return;
         }
-
-        render();
     }
 
-    async function enterRecoveryMode() {
-        try {
-            const [fs1Handle] = await window.showOpenFilePicker({
-                types: [{
-                    accept: {
-                        "text/plain": [".fs1"]
-                    }
-                }]
-            });
-
-            const [rcvrHandle] = await window.showOpenFilePicker({
-                types: [{
-                    accept: {
-                        "text/plain": [".rcvr"]
-                    }
-                }]
-            });
-
-            const rcvrText = await (await rcvrHandle.getFile()).text();
-
-            const writable = await fs1Handle.createWritable();
-            await writable.write(rcvrText);
-            await writable.close();
-        } catch (e) {}
-    }
-
-    const handler = async (e) => {
+    const handler = (e) => {
         if (e.repeat) return;
 
         if (e.key === "ArrowUp") {
@@ -298,7 +426,7 @@ async function BIOS() {
         }
 
         if (e.key === "Enter") {
-            await handleSelect(selected);
+            handleSelect(selected);
         }
     };
 
@@ -354,7 +482,21 @@ async function boot() {
         sda = fs1Text;
         window.fs = parseFS1(fs1Text);
         window.sda = sda;
+        let version;
 
+        const kernelV1Hash = "751cdb9aaa565b9b8c371a314c1266a0eab9ed5b4beca0352d8066b58f4eb0fc";
+
+        const kernelMatch = await checkSHA256("/krnl/kernel.js", kernelV1Hash);
+
+        if ("/etc/.version" in window.fs.files) {
+            version = window.fs.files["/etc/.version"].trim();
+        } else if (kernelMatch) {
+            version = "1.0.0";
+        } else {
+            version = "Unknown";
+        }
+
+        window.version = version;
         document.addEventListener("click", () => {
             if (!document.fullscreenElement) {
                 document.documentElement.requestFullscreen().catch(err => {
@@ -385,5 +527,6 @@ async function boot() {
 
     document.addEventListener("keydown", handler);
 }
+window.recoveryMode = recoveryMode;
 window.parseFS1 = parseFS1;
 boot();
