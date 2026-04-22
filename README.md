@@ -1,5 +1,5 @@
 # BrowserLinux
-Your own linux distro running in your browser  
+BrowserLinux is a OS based on Linux fully coded in Javascript from scratch. No emulation, no v86. just pure bland javascript.
 ==> https://vrdog28.github.io/BrowserLinux
 ## Screenshots!
 ![](https://github.com/VRDog28/BrowserLinux/blob/main/screenshots/screenshot10.png)
