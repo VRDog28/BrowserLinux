@@ -1,4 +1,4 @@
-
+// outdated
 const screen = document.getElementById("screen");
 let sda = null;
 
