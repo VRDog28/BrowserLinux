@@ -28,9 +28,7 @@ you have path, line count, metadata
 `--end` is used for declaring the end of a fs1 file
 
 ## ♻️ Powerwashing
-type `sudo powerwash` to powerwash and reset your system
-## 💿 RCVR FILES
-rcvr stands for recovery which is a backup/recovery file for a fs1 filesystem
+type `powerwash` to powerwash and reset your system
 ## 🔒 The fs1 permission system
 Unlike linux, BrowserLinux uses the fs1 permission system which supports write and read permissions.  
 These are stored in the metadata of a folder.  
