@@ -1,5 +1,7 @@
 # BrowserLinux
 
+![GitHub Downloads (all assets, all releases)](https://img.shields.io/github/downloads/VRDog28/BrowserLinux/total)
+
 BrowserLinux is a **full custom OS created with pure JavaScript**, running inside your browser.
 
 It is **not an emulator** and does not running a Linux kernel. Instead, it implements core OS concepts from scratch, including:
