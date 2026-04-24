@@ -9,7 +9,7 @@ If you flash custom firmware you might never boot into BrowserLinux again.
 - At least Version 1.0.0
 ### 💬 TUTORIAL
 type `sudo -s` if you haven't already  
-type `flash` to unlock the firmware  
+type `flash` to unlock the firmware (On version 2.0.0 you first have to disable wp. Enter `sudo rm /etc/.write-protect`)  
 type `touch /firm/firmware.js` to create a base  
 finally type `nano /firm/firmware.js` to edit the new firmware.  
 NOTE:  
