@@ -64,7 +64,7 @@
     let current = null;
 
     function loadPage(name) {
-      const file = name + ".md"; // 👈 AUTO ADD .md
+      const file = name + ".md";
 
       fetch("./" + file)
         .then(r => {
@@ -108,8 +108,6 @@
 
           sidebar.appendChild(div);
         });
-
-        // load first page automatically
         if (list.length > 0) {
           loadPage(list[0]);
         }
