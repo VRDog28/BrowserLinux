@@ -1,8 +1,8 @@
 # LAKE BIOS UTILITY
 
-Press delete on the continue screen to enter the bios utility  
+Press B when Lake Firmware is booting to enter the Lake Bios Utility 
 
-![](https://raw.githubusercontent.com/VRDog28/BrowserLinux/main/screenshots/screenshot7.jpg)
+![](https://raw.githubusercontent.com/VRDog28/BrowserLinux/main/screenshots/screenshot11.png)
 
 Use the arrow keys and enter to navigate!  
 
@@ -14,4 +14,4 @@ This fully reloads the bios
 ## ❌ Exiting the bios
 Exits the bios menu
 ## ✅ Recovery mode
-You can restore a broken fs1 file from a rcvr file
+You can restore a broken fs1
