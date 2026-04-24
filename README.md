@@ -1,22 +1,90 @@
 # BrowserLinux
-BrowserLinux is a OS based on Linux fully coded in Javascript from scratch. No emulation, no v86. just pure bland javascript.
-==> https://vrdog28.github.io/BrowserLinux
-## Screenshots!
+
+BrowserLinux is a **full custom OS created with pure JavaScript**, running inside your browser.
+
+It is **not an emulator** and does not running a Linux kernel. Instead, it implements core OS concepts from scratch, including:
+- a custom kernel (BrowserLinux Kernel)
+- a virtual filesystem (fs1)
+- a command-line shell
+- userland utilities (100+ commands)
+- boot process and configuration system (/etc)
+
+👉 https://vrdog28.github.io/BrowserLinux (Website)
+
+---
+
+## So what makes it unique?
+
+Contrary to common online shells, BrowserLinux is more than just a toy shell.
+
+It provides:
+
+- file storage (via `.fs1` files)
+- file structure (`/bin`, `/etc`, `/usr`, etc.)
+- executable scripts written in JavaScript & Bash
+- system configuration and logging (/var/syslog.log)
+
+---
+
+## 📸 Screenshots
+
 ![](https://github.com/VRDog28/BrowserLinux/blob/main/screenshots/screenshot10.png)
 ![](https://github.com/VRDog28/BrowserLinux/blob/main/screenshots/screenshot12.png)
 ![](https://github.com/VRDog28/BrowserLinux/blob/main/screenshots/screenshot11.png)
-### WIKI
+
+---
+
+## Getting started
+
+- Start the project in your browser  
+- Press **D** for quick mode (no saving)  
+- Press **Enter** to load a `.fs1` file
+
+---
+
+## 📦 Features
+
+- many built-in commands (`ls`, `cd`, `rm`, etc)
+- Custom file system format (`fs1`)
+- Config system (`/etc`)
+- Logging (`/var/syslog.log`)
+- Package Manager (`ggp`)
+- Script execution via Javascript and Bash
+- Fully open source and hackable!
+
+---
+
+## Wiki
+
 https://vrdog28.github.io/BrowserLinux/wiki
-### Get Started
-- Open the project in your browser
-- Press D for quick access without any fs1 (no file saving)
-- Press Enter to select a fs1 (Download from releases)
-### Current Version
-1.0.0
-## To Do: (V2.0.0)
-- Releasing soon 😲
-## Why choose BrowserLinux:
-- Browser Linux adds features that other online terminals do not have.
-- This is fully coded in Javascript from scratch and does not use any real emulation
-- Open source, you can change anything within the website
-- Is not like any other online terminal
+
+---
+
+## 🔢 Current Version
+
+**2.0.0**
+
+---
+
+## 🔮 Roadmap (V3.0.0)
+
+- Multi boot (`mfs1`)
+- USB (`/media`)
+- Developer Mode (`/dev/bin`)
+- Much more!
+
+---
+
+## Why BrowserLinux?
+
+- Not an emulator, everything is built from scratch
+- it behaves like a real system
+- Fully open, you can inspect and modify everything
+- Runs anywhere, no install needed
+
+---
+
+## ❗ Important Note
+
+Browser Linux is not a real Linux Distro.
+Instead it is a open source project designed to replicate Linux.
