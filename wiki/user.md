@@ -4,9 +4,9 @@ Which means you can switch/create user but you can customize your own user
 ## 🔧 Customizing your user
 ### 🕶️ Changing your name
 To change your name follow these steps:  
-type `sudo nano /etc/profiles/default.conf` to change configuration.  
-in qoutes replace userName="old_name" to userName="new_name"  
-reboot using `sudo reboot` to apply the changes
+1. type `sudo nano /etc/profiles/default.conf` to change configuration.  
+2. replace userName="old_name" to userName="new_name"  
+3. reboot using `sudo reboot` to apply the changes
 ### 🕶️ Changing the hostname
 Same for the hostname
 ### 🔒 Changing the root password
