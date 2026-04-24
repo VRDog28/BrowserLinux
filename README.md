@@ -26,6 +26,8 @@ It provides:
 
 ---
 
+![](https://github.com/VRDog28/BrowserLinux/blob/main/assets/carbon.png)
+
 ## 📸 Screenshots
 
 ![](https://github.com/VRDog28/BrowserLinux/blob/main/screenshots/screenshot10.png)
