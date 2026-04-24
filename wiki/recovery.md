@@ -10,8 +10,5 @@ You might think you need sudo to powerwash but there is a handy way to bypass th
 `enterprise=false`  
 - save and exit and **force** reboot your system using `CTRL + R`
 - after booting type `powerwash` and if you've done it correctly it should ask for confirmation type `y` and it should powerwash and reset your system
-## 💿 Way 2: RCVR Recovery
-Using the BIOS UTILITY TOOL select the option Recovery Mode (recovery, rcvr)  
-select your fs1 and a rcvr (if you dont have one download a fresh fs1 file and rename it to main.rcvr)  
-Then reload the bios and boot
-
+## ⚠️ NOTE
+On version 2.0.0 powerwash does not require sudo!
