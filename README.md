@@ -28,14 +28,9 @@ It provides:
 
 ---
 
-![](https://github.com/VRDog28/BrowserLinux/blob/main/assets/carbon.png)
-
-## 📸 Content
-
 ![](https://github.com/VRDog28/BrowserLinux/blob/main/assets/example.gif)
+![](https://github.com/VRDog28/BrowserLinux/blob/main/assets/carbon.png)
 ![](https://github.com/VRDog28/BrowserLinux/blob/main/screenshots/screenshot10.png)
-![](https://github.com/VRDog28/BrowserLinux/blob/main/screenshots/screenshot12.png)
-![](https://github.com/VRDog28/BrowserLinux/blob/main/screenshots/screenshot11.png)
 
 ---
 
