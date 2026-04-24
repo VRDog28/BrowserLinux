@@ -47,7 +47,7 @@ Marks the end of the system
 
 ---
 
-## - Techinal challenges
+## - Technical challenges
 
 ### - Strict parsing requirements
 
