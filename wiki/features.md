@@ -69,9 +69,5 @@ nano /usr/local/dump.conf
 ````
 
 ### 📖 Available dump settings
-- disablesudo  
-disables sudo  
-- bypasspowerwash  
-bypasses powerwash  
 - lock  
 locks the system forever  
