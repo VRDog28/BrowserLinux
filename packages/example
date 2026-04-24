@@ -1,0 +1,8 @@
+fs1
+--folders
+--files
+/usr/bin/example.js
+1
+write("this is a example package!\n");
+--meta
+--end
