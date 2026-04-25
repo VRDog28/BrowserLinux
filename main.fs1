@@ -10,29 +10,48 @@ fs1
 /tmp
 /usr
 /var
+/etc/default
 /etc/profiles
+/etc/systemd
 /etc/uas
 /home/Documents
 /home/Downloads
+/home/Music
 /home/Videos
 /krnl/sound
 /root/bin
 /usr/bin
 /usr/local
 /usr/share
+/etc/systemd/system
 /usr/local/bin
 /usr/local/womki
 /usr/share/fonts
+/usr/share/help
 --files
 /bin/bash.js
-610
+746
 window.typemode = false;
 window.typefile = "";
 window.shell.ifStack = [];
 window.shell.whileStack = [];
-
+window.shell.last = [];
+window.shell.whileRef = {};
 let exit = false
 let exitcode = null;
+    function getEffectiveWritePermission(folderPath) {
+        const parts = folderPath.split("/").filter(Boolean);
+        let currentPath = "/";
+        let permission = 0; 
+
+        for (const part of parts) {
+            currentPath = currentPath === "/" ? "/" + part : currentPath + "/" + part;
+            if (fs.meta[currentPath] && fs.meta[currentPath].writepermission !== undefined) {
+                permission = parseInt(fs.meta[currentPath].writepermission);
+            }
+        }
+        return permission;
+    }
 
 async function evaluateCondition(condition) {
     condition = handleVariables(condition).trim();
@@ -77,25 +96,45 @@ async function evaluateCondition(condition) {
 
         return false;
     }
-
-    return false;
+    if (condition.trim() == "true") return true;
+    if (condition.trim() == "false") return false;
+    let originalWrite = write;
+    write = (text, color="d", color2="d") => {};
+    await executeCommand(condition);
+    write = originalWrite;
+    return window.shell.lastStatus === 0;
 }
 
 async function runIfBlock(lines, shouldRun) {
     let execute = false;
+    let depth = 0;
+    lines = lines.slice(1);
+    console.log(lines);
     for (const line of lines) {
-        if (line === "then") {
+        const t = line.trim();
+        if (t.startsWith("if ")) {
+            depth++;
+        }
+        if (t === "then" && depth === 0) {
             execute = shouldRun;
             continue;
         }
-
-        if (line === "else") {
+        if (t === "else" && depth === 0) {
             execute = !shouldRun;
             continue;
         }
-
-        if (line === "fi") break;
-
+        if (t.startsWith("elif") && depth === 0) {
+            if (execute) {
+                shouldRun = false;
+                continue;
+            }
+            shouldRun = await evaluateCondition(t.slice(5));
+            continue;
+        }
+        if (t === "fi") {
+            if (depth === 0) break;
+            depth--;
+        }
         if (execute) {
             await executeCommand(line);
         }
@@ -107,9 +146,6 @@ function yieldToUI() {
 }
 
 async function runWhileBlock(stateRef) {
-
-    const savedStack = window.shell.whileStack;
-    window.shell.whileStack = []; 
 
     const id = Math.random().toString(36).slice(2, 6);
 
@@ -131,7 +167,12 @@ async function runWhileBlock(stateRef) {
             handleVariables(stateRef.condition)
         );
 
+        console.log("run")
+
         if (!result) break;
+
+        console.log("run2")
+
 
         for (const line of stateRef.buffer) {
             const t = line.trim();
@@ -139,21 +180,22 @@ async function runWhileBlock(stateRef) {
             await yieldToUI();
             await executeCommand(t);
 
-            if (stateRef.break || window.shell.breakSignal) {
+            if (stateRef.break) {
                 stateRef.break = false;
-                window.shell.breakSignal = false;
-                window.shell.whileStack = savedStack;
+                window.shell.whileRef = {};
                 return;
+            }
+            if (stateRef.continue) {
+                stateRef.continue = false;
+                window.shell.whileRef.continue = false;
+                break;
             }
         }
     }
-
-    window.shell.whileStack = savedStack; 
-
+    window.shell.whileRef = {};
 }
 
 async function setVar(name, value) {
-    value = await resolveCommandSubstitution(value);
     if (!name || typeof name !== "string") {
         write("bash: invalid variable name\n");
         return;
@@ -166,7 +208,7 @@ async function setVar(name, value) {
         return;
     }
 
-    const varConfPath = "/tmp/var.conf";
+    const varConfPath = "/etc/var.conf";
 
     if (!fs.files[varConfPath]) fs.files[varConfPath] = "";
 
@@ -206,8 +248,20 @@ async function setVar(name, value) {
 async function handleIf(trimmed) {
     const stack = window.shell.ifStack;
     const current = stack[stack.length - 1];
-
+    if (current?.intype) {
+        if (trimmed === "EOF") {
+            current.intype = false;
+        }
+        current.buffer.push(trimmed);
+        return true;
+    }
     if (trimmed.startsWith("if ")) {
+        if (current) {
+            current.depth++;
+            current.buffer.push(trimmed);
+            return true;
+        }
+        window.shell.last.push("if");
         const condition = trimmed.slice(3).trim();
 
         let result = false;
@@ -222,126 +276,150 @@ async function handleIf(trimmed) {
         stack.push({
             waitingForThen: true,
             conditionPassed: result,
-            buffer: [trimmed]
+            buffer: [trimmed],
+            depth: 1,
+            intype: false
         });
 
         return true;
     }
+    if (!current) return false;
 
+    if (trimmed.startsWith("type ") && !current.intype) {
+        current.intype = true;
+        current.buffer.push(trimmed);
+        return true;
+    }
     if (trimmed.startsWith("then")) {
-        if (!current) return true;
-
-        current.waitingForThen = false;
         current.buffer.push("then");
 
         const rest = trimmed.slice(4).trim();
         if (rest) current.buffer.push(rest);
 
+        if (rest && rest.startsWith("if ")) current.depth++;
+        
+
         return true;
     }
-
     if (trimmed.startsWith("else")) {
-        if (!current) return true;
-
         current.buffer.push("else");
 
         const rest = trimmed.slice(4).trim();
         if (rest) current.buffer.push(rest);
 
-        return true;
-    }
-
-    if (trimmed === "fi") {
-        if (!current) return true;
-
-        current.buffer.push("fi");
-
-        const finished = stack.pop();
-
-        await runIfBlock(finished.buffer, finished.conditionPassed);
+        if (rest && rest.startsWith("if ")) current.depth++;
 
         return true;
     }
-
-    if (current) {
+    if (trimmed.startsWith("elif")) {
         current.buffer.push(trimmed);
         return true;
     }
+    if (trimmed === "fi") {
+        current.buffer.push("fi");
+        current.depth--;
+        if (current.depth === 0) {
+            window.shell.last.pop();
+            const finished = stack.pop();
+            await runIfBlock(finished.buffer, finished.conditionPassed);
+        }
 
-    return false;
+        return true;
+    }
+    current.buffer.push(trimmed);
+    return true;
 }
 
 async function handleWhile(raw) {
     const stack = window.shell.whileStack;
     const current = stack[stack.length - 1];
-
+    if (current?.intype) {
+        if (raw === "EOF") {
+            current.intype = false;
+        }
+        current.buffer.push(raw);
+        return true;
+    }
     if (raw.startsWith("while ")) {
         if (current) {
-
+            current.depth++;
             current.buffer.push(raw);
             return true;
         }
+        window.shell.last.push("while");
         stack.push({
             waitingForDo: true,
             condition: raw.slice(6).trim(),
             buffer: [],
-            break: false
+            break: false,
+            intype: false,
+            depth: 1,
+            continue: false
         });
+        return true;
+    }
+    if (!current) return false;
+    if (raw.startsWith("type ") && !current.intype) {
+        current.intype = true;
+        current.buffer.push(raw);
         return true;
     }
 
     if (raw === "do" || raw.startsWith("do ")) {
-        if (!current) return true;
-        current.buffer.push(raw);
         return true;
     }
 
     if (raw === "done") {
-        if (!current) return true;
-
-        let depth = 0;
-        for (const l of current.buffer) {
-            if (l.trim().startsWith("while ")) depth++;
-            if (l.trim() === "done") depth--;
-        }
-
-        if (depth > 0) {
-
-            current.buffer.push(raw);
-            return true;
-        }
-
-        current.buffer.push(raw);
-        const finished = stack.pop();
-
-        if (stack.length === 0) {
+        current.depth--;
+        if (current.depth === 0) {
+            window.shell.last.pop();
+            const finished = stack.pop();
+            window.shell.whileRef = finished;
             await runWhileBlock(finished);
         }
 
         return true;
     }
 
-    if (current) {
-        current.buffer.push(raw);
-        return true;
-    }
 
-    return false;
+    current.buffer.push(raw);
+    return true;
+
 }
 
 function handleAssignment(cmdLine) {
     const assignMatch = cmdLine.match(/^([a-zA-Z_]\w*)=(.+)$/);
-
     if (!assignMatch) return false;
 
     const varName = assignMatch[1];
+    const rawValue = assignMatch[2].trim();
+
     let varValue;
 
+
     try {
-        varValue = Function(`"use strict"; return (${assignMatch[2]});`)();
+        varValue = JSON.parse(rawValue);
     } catch {
-        varValue = assignMatch[2];
+        if (/^[0-9+\-*/().\s]+$/.test(rawValue)) {
+            try {
+                varValue = Function(`"use strict"; return (${rawValue})`)();
+            } catch {
+                varValue = rawValue;
+            }
+        }
+        else if (rawValue === "true") varValue = true;
+        else if (rawValue === "false") varValue = false;
+        else if (
+            (rawValue.startsWith('"') && rawValue.endsWith('"')) ||
+            (rawValue.startsWith("'") && rawValue.endsWith("'"))
+        ) {
+            varValue = rawValue.slice(1, -1);
+        }
+        else {
+            varValue = rawValue;
+        }
     }
+
     setVar(varName, varValue);
     return true;
 }
@@ -396,11 +474,11 @@ async function handlePipes(commandPart) {
 }
 
 function handleVariables(commandPart) {
-    if (!fs.files["/tmp/var.conf"]) return commandPart;
+    if (!fs.files["/etc/var.conf"]) return commandPart;
 
     const allowedKeys = new Set();
 
-    fs.files["/tmp/var.conf"].split("\n").forEach(line => {
+    fs.files["/etc/var.conf"].split("\n").forEach(line => {
         const eq = line.indexOf("=");
         if (eq === -1) return;
 
@@ -442,22 +520,46 @@ async function executeCommandCapture(cmd) {
 }
 
 async function resolveCommandSubstitution(input) {
-    const regex = /\$\(([^)]+)\)/g;
+    let result = "";
+    let i = 0;
 
-    let match;
+    while (i < input.length) {
+        if (input[i] === "$" && input[i + 1] === "(") {
+            i += 2;
 
-    while ((match = regex.exec(input))) {
-        const command = match[1];
+            let depth = 1;
+            let command = "";
 
-        const output = await executeCommandCapture(command);
+            while (i < input.length && depth > 0) {
+                if (input[i] === "(") {
+                    depth++;
+                } else if (input[i] === ")") {
+                    depth--;
+                    if (depth === 0) {
+                        i++;
+                        break;
+                    }
+                }
 
-        input = input.replace(match[0], output.trim());
+                command += input[i];
+                i++;
+            }
+
+            const resolved = await resolveCommandSubstitution(command);
+
+            const output = await executeCommandCapture(resolved);
+
+            result += output.trim();
+        } else {
+            result += input[i];
+            i++;
+        }
     }
 
-    return input;
+    return result;
 }
 
-async function executeCommand(cmdLine) {
+async function executeCommand(cmdLine, store=false) {
     if (window.typemode && window.fs.files.hasOwnProperty(window.typefile)) {
         if (cmdLine == "EOF") {
             window.fs.files[window.typefile] = window.fs.files[window.typefile].replace(/\n$/, "");
@@ -471,24 +573,36 @@ async function executeCommand(cmdLine) {
     }
     if (cmdLine.trim() == "") return;
 
+    const inIf = window.shell.ifStack.length > 0;
+    const inWhile = window.shell.whileStack.length > 0;
+
     const commands = cmdLine.split(";").map(c => c.trim()).filter(Boolean);
 
-    if (commands.length > 1) {
+    if (commands.length > 1 && !inIf && !inWhile) {
         for (const cmd of commands) {
             await executeCommand(cmd);
         }
         return;
     }
 
+    cmdLine = await resolveCommandSubstitution(cmdLine);
+
     const raw = cmdLine.trim(); 
 
-    if (await handleWhile(raw)) return;
+
 
     let trimmed = handleVariables(raw);
 
-    if (await handleIf(trimmed)) return;
+    if (window.shell.last.at(-1) == "if") {
+        if (await handleIf(trimmed)) return;
+    } else if (window.shell.last.at(-1) == "while") {
+        if (await handleWhile(raw)) return;
+    } else {
+        if (await handleWhile(raw)) return;
+        if (await handleIf(trimmed)) return;
+    }
 
-    if (window.fs.files.hasOwnProperty("/home/.bash_history")) {
+    if (window.fs.files.hasOwnProperty("/home/.bash_history") && store) {
         window.fs.files["/home/.bash_history"] += cmdLine + "\n";
     }
 
@@ -504,40 +618,70 @@ async function executeCommand(cmdLine) {
 
     if (await handlePipes(commandPart)) return;
 
-    commandPart = handleVariables(commandPart);
+    commandPart = handleVariables(commandPart).trim();
+
+    let tempparts = commandPart.split(" ")
+    if (Object.keys(window.shell.aliases).length > 0) {
+        for (let key in window.shell.aliases) {
+            if (tempparts[0] == key) {
+                tempparts.shift();
+                commandPart = window.shell.aliases[key] + " " + tempparts.join(" ");
+                break;
+            }
+        }
+    }
+    
 
     const parts = commandPart.split(" ");
     const cmd = parts[0];
     if (cmd === "break") {
-        const stack = window.shell.whileStack;
-        if (stack.length > 0) {
-            stack[stack.length - 1].break = true;
-        } else {
-
-            window.shell.breakSignal = true;
+        if (Object.keys(window.shell.whileRef).length === 0) {
+            write("-bash: break: only meaningful in a 'while' loop\n");
+            return;
         }
+        window.shell.whileRef.break = true;
+        return;
+    } else if (cmd === "continue") {
+            if (Object.keys(window.shell.whileRef).length === 0) {
+                write("-bash: continue: only meaningful in a 'while' loop\n");
+            return;
+        }
+        window.shell.whileRef.continue = true;
         return;
     }
     const argsOrig = parts.slice(1);
 
     let originalWrite = write;
     let wroteToFile = false;
+    let haspermission = false;
+    let path;
 
     if (targetFile) {
+        let base = targetFile.startsWith("/") ? targetFile : (shell.cwd === "/" ? "" : shell.cwd) + "/" + targetFile;
+        path = "/" + base.split("/").filter(Boolean).reduce((a, p) => p === ".." ? (a.pop(), a) : p === "." ? a : (a.push(p), a), []).join("/");
+        if (path === "/dev/null") return;
+        if (fs.meta[path] && fs.meta[path]["writepermission"] && fs.meta[path]["writepermission"] <= shell.userPermission) haspermission = true;
+        if (!haspermission) {
+            let parent = path.substring(0, path.lastIndexOf("/")) || "/";
+            path = parent
+            if (fs.meta[path] && fs.meta[path]["writepermission"] && fs.meta[path]["writepermission"] <= shell.userPermission) haspermission = true;
+            if (!haspermission) {
+                const folderWritePerm = getEffectiveWritePermission(path);
+                if (shell.userPermission >= folderWritePerm) haspermission = true; 
+            }
+        }
+        if (!haspermission) {
+            write("bash: cannot write to '" + path + "': Permission denied\n");
+            window.shell.lastStatus = 1;
+            return;
+        }
         let overwriteFirstWrite = true;
 
         write = (text) => {
             let path;
 
-            if (targetFile.startsWith("/")) {
-                path = targetFile.replace(/\/+/g, "/");
-            } else {
-                path =
-                    (shell.cwd === "/" ? "/" : shell.cwd + "/") + targetFile;
-                path = path.replace(/\/+/g, "/");
-            }
-
-            if (path === "/dev/null") return;
+    let base = targetFile.startsWith("/") ? targetFile : (shell.cwd === "/" ? "" : shell.cwd) + "/" + targetFile;
+    path = "/" + base.split("/").filter(Boolean).reduce((a, p) => p === ".." ? (a.pop(), a) : p === "." ? a : (a.push(p), a), []).join("/");
 
             if (!fs.files.hasOwnProperty(path)) {
                 fs.files[path] = "";
@@ -564,7 +708,7 @@ async function executeCommand(cmdLine) {
 
     let cmdPath = null;
 
-    for (const base of window.shell.path) {
+    for (let base of window.shell.path) {
         const fullPath = `${base}/${cmd}.js`;
 
         if (fs.files[fullPath]) {
@@ -572,19 +716,20 @@ async function executeCommand(cmdLine) {
             break;
         }
     }
-
     if (cmdPath) {
         try {
             window.shell.args = argsOrig;
             await runFile(cmdPath);
         } catch (e) {
             originalWrite(`Error: ${cmd}: ${e.message}\n`);
+            window.shell.lastStatus = 1;
         }
     } else if (cmd == "exit") {
         exit = true;
         if (argsOrig[0]) exitcode = argsOrig[0];
     } else {
         originalWrite(`${cmd}: command not found\n`);
+        window.shell.lastStatus = 127;
     }
 
     if (targetFile) write = originalWrite;
@@ -599,12 +744,8 @@ window.setVar = setVar;
 if (shell.args.length == 0) return;
 const target = shell.args[0];
 let path;
-if (target.startsWith("/")) {
-    path = target.replace(/\/+/g, "/");
-} else {
-    path = (shell.cwd === "/" ? "/" : shell.cwd + "/") + target;
-    path = path.replace(/\/+/g, "/");
-}
+let base = target.startsWith("/") ? target : (shell.cwd === "/" ? "" : shell.cwd) + "/" + target;
+path = "/" + base.split("/").filter(Boolean).reduce((a, p) => p === ".." ? (a.pop(), a) : p === "." ? a : (a.push(p), a), []).join("/");
 
 let file = window.fs.files[path];
 
@@ -636,36 +777,34 @@ if (exitcode != null) {
     return Number(exitcode);
     exitcode = null;
 }
-/bin/clear.js
-1
-clear();
 /bin/js.js
-17
+13
 if (!shell.args || shell.args.length === 0) {
     write("js: missing operand\n");
     return;
 }
 if (shell.userPermission < 4) {
-    write("ls: insufficient permissions");
+    write("js: insufficient permissions");
     return;
 }
 const target = shell.args[0];
 let path;
-if (target.startsWith("/")) {
-    path = target.replace(/\/+/g, "/");
-} else {
-    path = (shell.cwd === "/" ? "/" : shell.cwd + "/") + target;
-    path = path.replace(/\/+/g, "/");
-}
+let base = target.startsWith("/") ? target : (shell.cwd === "/" ? "" : shell.cwd) + "/" + target;
+path = "/" + base.split("/").filter(Boolean).reduce((a, p) => p === ".." ? (a.pop(), a) : p === "." ? a : (a.push(p), a), []).join("/");
 runFile(path);
 /bin/terminal.js
-149
+248
 let input = "";
 let cursorPos = 0;
 let inputLineEl = null;
 let terminaluser = window.shell.userName || "Undefined";
 let terminalhost = window.shell.hostName || "Undefined";
 let usercwd = ""
+let curindex = 0;
+function reload() {
+    let terminaluser = window.shell.userName || "Undefined";
+    let terminalhost = window.shell.hostName || "Undefined";
+}
 function prompt() {
     input = "";
     cursorPos = 0;
@@ -676,6 +815,7 @@ function prompt() {
 
     renderInputLine();
 }
+
 
 function renderInputLine() {
     if (!inputLineEl) {
@@ -689,16 +829,27 @@ function renderInputLine() {
     } else {
         usercwd = window.shell.cwd;
     }
-    const promptSpan = document.createElement("span");
-    promptSpan.textContent = `${terminaluser}@${terminalhost}:${usercwd}$ `;
-    if (shell.userPermission > 3) promptSpan.style.color = "red";
-    if (shell.userPermission < 4) promptSpan.style.color = "lime";
-    promptSpan.style.backgroundColor = window.shell.theme?.[1] || "black"; 
-
-    promptSpan.style.fontSize = window.shell.theme?.[3] || "14px";
-    promptSpan.style.fontFamily = getComputedStyle(document.body).fontFamily;
-    inputLineEl.appendChild(promptSpan);
-
+    const userHostSpan = document.createElement("span");
+    userHostSpan.textContent = `${terminaluser}@${terminalhost}`;
+    userHostSpan.style.color = shell.userPermission > 3 ? "red" : "lime";
+    const colonSpan = document.createElement("span");
+    colonSpan.textContent = ":";
+    colonSpan.style.color = "white";
+    const pathSpan = document.createElement("span");
+    pathSpan.textContent = usercwd;
+    pathSpan.style.color = "dodgerblue";
+    const dollarSpan = document.createElement("span");
+    dollarSpan.textContent = "$ ";
+    dollarSpan.style.color = "white";
+    [userHostSpan, colonSpan, pathSpan, dollarSpan].forEach(span => {
+        span.style.backgroundColor = window.shell.theme?.[1] || "black";
+        span.style.fontSize = window.shell.theme?.[3] || "14px";
+        span.style.fontFamily = getComputedStyle(document.body).fontFamily;
+    });
+    inputLineEl.appendChild(userHostSpan);
+    inputLineEl.appendChild(colonSpan);
+    inputLineEl.appendChild(pathSpan);
+    inputLineEl.appendChild(dollarSpan);
     for (let i = 0; i <= input.length; i++) {
         const span = document.createElement("span");
 
@@ -723,6 +874,27 @@ function renderInputLine() {
 const keydownHandler = async (e) => {
     if (window.shell.inputMode !== "command") return;
 
+    if (e.ctrlKey && e.key.toLowerCase() === "v") {
+        e.preventDefault();
+
+        try {
+            const text = await navigator.clipboard.readText();
+
+            input =
+                input.slice(0, cursorPos) +
+                text +
+                input.slice(cursorPos);
+
+            cursorPos += text.length;
+
+            renderInputLine();
+        } catch (err) {
+            console.error("Paste failed:", err);
+        }
+
+        return;
+    }
+
     if (e.key === "Backspace") {
         if (cursorPos > 0) {
             input = input.slice(0, cursorPos - 1) + input.slice(cursorPos);
@@ -746,7 +918,54 @@ const keydownHandler = async (e) => {
         e.preventDefault();
         return;
     }
+const rawFile = window.fs?.files?.["/home/.bash_history"];
 
+const rawHistory = typeof rawFile === "string"
+    ? rawFile.split("\n").filter(line => line.trim() !== "")
+    : [];
+
+const history = [];
+
+for (let i = 0; i < rawHistory.length; i++) {
+    if (i === 0 || rawHistory[i] !== rawHistory[i - 1]) {
+        history.push(rawHistory[i]);
+    }
+}
+
+if (e.key === "ArrowUp") {
+    if (curindex >= history.length) return;
+
+    curindex++;
+
+    input = history[history.length - curindex];
+    cursorPos = input.length;
+
+    renderInputLine();
+    return;
+}
+
+if (e.key === "ArrowDown") {
+    if (curindex <= 0) {
+        curindex = 0;
+        input = "";
+        cursorPos = 0;
+        renderInputLine();
+        return;
+    }
+
+    curindex--;
+
+    if (curindex === 0) {
+        input = "";
+        cursorPos = 0;
+    } else {
+        input = history[history.length - curindex];
+        cursorPos = input.length;
+    }
+
+    renderInputLine();
+    return;
+}
     if (e.key === "Enter") {
         if (inputLineEl) {
             inputLineEl.innerHTML = "";
@@ -755,19 +974,28 @@ const keydownHandler = async (e) => {
             } else {
                 usercwd = window.shell.cwd;
             }
-            const promptSpan = document.createElement("span");
-            promptSpan.textContent = `${terminaluser}@${terminalhost}:${usercwd}$ `;
+            const userHostSpan = document.createElement("span");
+            userHostSpan.textContent = `${terminaluser}@${terminalhost}`;
+            userHostSpan.style.color = shell.userPermission > 3 ? "red" : "lime";
+            const colonSpan = document.createElement("span");
+            colonSpan.textContent = ":";
+            colonSpan.style.color = "white";
+            const pathSpan = document.createElement("span");
+            pathSpan.textContent = usercwd;
+            pathSpan.style.color = "dodgerblue";
+            const dollarSpan = document.createElement("span");
+            dollarSpan.textContent = "$ ";
+            dollarSpan.style.color = "white";
+            [userHostSpan, colonSpan, pathSpan, dollarSpan].forEach(span => {
+                span.style.backgroundColor = window.shell.theme?.[1] || "black";
+                span.style.fontSize = window.shell.theme?.[3] || "14px";
+                span.style.fontFamily = getComputedStyle(document.body).fontFamily;
+            });
+            inputLineEl.appendChild(userHostSpan);
+            inputLineEl.appendChild(colonSpan);
+            inputLineEl.appendChild(pathSpan);
+            inputLineEl.appendChild(dollarSpan);
 
-            if (shell.userPermission > 3) promptSpan.style.color = "red";
-            if (shell.userPermission < 4) promptSpan.style.color = "lime";
-
-            promptSpan.style.backgroundColor =
-                window.shell.theme?.[1] || "black";
-            promptSpan.style.fontSize = window.shell.theme?.[3] || "14px";
-            promptSpan.style.fontFamily =
-                getComputedStyle(document.body).fontFamily;
-
-            inputLineEl.appendChild(promptSpan);
 
             const textSpan = document.createElement("span");
             textSpan.textContent = input;
@@ -791,7 +1019,8 @@ const keydownHandler = async (e) => {
             return;
         }
 
-        await executeCommand(input);
+        await executeCommand(input, true);
+        curindex = 0;
 
         inputLineEl = null;
         prompt();
@@ -807,20 +1036,31 @@ const keydownHandler = async (e) => {
 
 document.addEventListener("keydown", keydownHandler);
 window.prompt = prompt;
+window.reload = reload;
 log("Terminal", "Starting main prompt", true);
+if (window.fs.files["/home/.bashrc"]) {
+    await executeCommand("bash /home/.bashrc");
+}
 prompt();
 /boot/boot.js
-7
+8
 await wait(1000);
 clear();
 log("Boot JS", "Attempting to start terminal.js", true);
 await runFile("/bin/bash.js");
 await runFile("/etc/dump.js");
 if (shell.dump.includes("lock")) { write("This system is locked!"); return; }
+window.shell.aliases = {};
 await runFile("/bin/terminal.js");
 /dev/null
 0
 /dev/sda
+1
+*
+/etc/.version
+1
+2.0.0
+/etc/.write-protect
 1
 *
 /etc/config.conf
@@ -887,9 +1127,9 @@ if (!profilePath) {
         }
     }
 
-    if (!fs.folders.includes("/tmp")) fs.folders.push("/tmp");
+    if (!fs.folders.includes("/etc")) fs.folders.push("/etc");
 
-    fs.files["/tmp/var.conf"] = fs.files[profilePath]; 
+    fs.files["/etc/var.conf"] = fs.files[profilePath]; 
 
     saveFS1();
 }
@@ -912,6 +1152,9 @@ for (const line of lines) {
     dump.push(valuename);
 }
 setVar("dump", dump);
+/etc/default/lake
+1
+VERBOSE_LOGGING=true
 /etc/profiles/default.conf
 14
 cwd="/home"
@@ -923,109 +1166,72 @@ font="/usr/share/fonts/Monospace.font"
 osName="Linux"
 browserName="Chrome"
 userName="browser"
-hostName="localhost"
+hostName="BrowserLinux"
 theme=["white","black","black","14px"]
 pipe=""
 home="/home"
 lastStatus=0
-/etc/uas/setup.conf
-1
-setup=1
-/etc/uas/uas.js
-64
-window.shell.userPermission = 4 
+/etc/systemd/system/init.js
+192
+async function runFile(path) {
+    const code = fs.files[path];
+    if (!code) {
+        log("systemd", "FILE NOT FOUND", true);
+        write("systemd: File not found: " + path + "\n");
+        return true;
+    }
 
-clear();
-write("#####################################\n");
-write("# Welcome to your operating system! #\n");
-write("#####################################\n");
-newline();
-if (!fs.meta["/etc"]) fs.meta["/etc"] = {};
-let userName = "";
-while (!userName) {
-    write("Enter a username: ");
-    await executeCommand('read -p "Username: " REPLY');
+    try {
+        active.push(path);
+        window.shell.lastStatus = await new Function(`return (async ()=>{ ${code} })();`)();
+        if (window.shell.lastStatus == undefined) window.shell.lastStatus = 0;
+        const index = active.indexOf(path);
 
-    userName = (window.shell.REPLY || "").trim();
-
-    if (!userName) {
-        write("Username cannot be empty.\n");
+        if (index !== -1) {
+            active.splice(index, 1);
+        }
+        return false
+    } catch (e) {
+        log("systemd", "Error: " + e.message, true);
+        write("systemd: " + e.message + "\n");
+        window.shell.lastStatus = 1;
+        return true
     }
 }
-await setVar("userName", userName);
-let passwordSet = false;
-while (!passwordSet) {
-    write("\nSet a superuser password:\n");
-
-    await new Promise(res => {
-        requestSuperuserPassword(async pw => {
-
-            if (!pw) {
-                write("\nPassword cannot be empty.\n");
-                return res();
-            }
-
-            write("\nConfirm superuser password:\n");
-
-            await requestSuperuserPassword(async confirmPw => {
-                if (pw !== confirmPw) {
-                    write("\nPasswords do not match. Try again.\n");
-                    return res();
-                }
-                fs.meta["/etc"][".superuser"] = pw;
-                passwordSet = true;
-                res();
-            });
-        });
-    });
+async function log(header, text, save = false) {
+    write("Logging ", "gray"); write("Log Service\n", "white");
+    await wait(50);
+    const logPath = "/var/syslog.log"
+    if (!fs.folders.includes("/var")) {
+        fs.folders.push("/var");
+    }
+    if (!fs.files.hasOwnProperty(logPath)) {
+        fs.files[logPath] = "";
+    }
+    const lines = text.split("\n");
+    const entry = lines.map(line => `${header}: ${line}`).join("\n") + "\n";
+    fs.files[logPath] += entry;
+    write("[ ", "gray"); write("OK", "green"); write(" ] ", "gray"); write("Logged ", "gray"), write("Log Service\n", "white");
 }
-write("\nEnter a hostname (optional, press Enter to skip): ");
-await executeCommand('read -p "Hostname: " REPLY');
-let hostName = (window.shell.REPLY).trim();
-if (!hostName) {
-    hostName = userName + "-pc";
+function log2(header, text, save = false) {
+    const logPath = "/var/syslog.log"
+    if (!fs.folders.includes("/var")) {
+        fs.folders.push("/var");
+    }
+    if (!fs.files.hasOwnProperty(logPath)) {
+        fs.files[logPath] = "";
+    }
+    const lines = text.split("\n");
+    const entry = lines.map(line => `${header}: ${line}`).join("\n") + "\n";
+    fs.files[logPath] += entry;
 }
-await setVar("hostName", hostName);
-await wait(1000);
-fs.files["/etc/uas/setup.conf"] = "setup=1";
-let config = fs.files["/tmp/var.conf"] || "";
-let lines = config.split("\n");
-lines.pop();
-config = lines.join("\n");
-fs.files["/etc/profiles/default.conf"] = config;
-await saveFS1();
-write("\nSetup complete!\n");
-await wait(1000);
-location.reload();
-/home/.bash_history
-0
-/krnl/kernel.js
-322
-const screen = document.getElementById("screen");
-const startTime = Date.now();
-let active = ["/krnl/kernel.js"];
-let saveTimeout = null;
-let saveLock = false;
-let savePending = false;
-
-function scrollToBottom() {
-    requestAnimationFrame(() => {
-        requestAnimationFrame(() => {
-            window.scrollTo(0, document.documentElement.scrollHeight);
-        });
-    });
-}
-
-function write(text, color, bg) {
+function write(text, color, bg, sw) {
     const defaultColor = "white";
     const defaultBg = "black";
-
     color = color || (window.shell.theme ? window.shell.theme[0] : defaultColor);
     bg = bg || (window.shell.theme ? window.shell.theme[1] : defaultBg);
-
     screen.style.overflowY = "auto";
     screen.style.maxHeight = screen.style.maxHeight || "100%"; 
-
     for (let char of text) {
         const span = document.createElement("span");
         span.textContent = char;
@@ -1034,39 +1240,6126 @@ function write(text, color, bg) {
         span.style.fontSize = window.shell.theme?.[3] || "14px";
         screen.appendChild(span);
     }
-    scrollToBottom();
+    if (!sw) scrollToBottom();
 }
+async function applyFontFromFile() {
+    if (!window.shell.font) return true;
+    const path = window.shell.font.replace(/\/+/g, "/");
+    if (!fs.files.hasOwnProperty(path)) {
+        write("systemd: Font file not found!\n");
+        return true
+    }
+    write("Applying ", "gray"); write("Font...\n", "white");
+    const fontContent = fs.files[path].trim();
+    const styleEl = document.createElement("style");
+    styleEl.innerHTML = `body, #screen { font-family: ${fontContent} !important; }`;
+    document.head.appendChild(styleEl);
+    write("[ ", "gray"); write("OK", "green"); write(" ] ", "gray"); write("Applied ", "gray"), write("Font.\n", "white");
+    return false
+}
+async function isSetupComplete() {
+    write("Checking ", "gray"); write("Setup Data...\n", "white");
+    const confPath = "/etc/uas/setup.conf";
 
+    if (!fs.files[confPath]) return false;
+
+    const content = fs.files[confPath].trim();
+    write("[ ", "gray"); write("OK", "green"); write(" ] ", "gray"); write("Checked ", "gray"), write("Setup Data.\n", "white");
+    return content.includes("setup=1");
+}
+async function boot() {
+    await log("Boot", "Starting boot process");
+    write("Mounting ", "gray"); write("Fs1 Filesystem...\n", "white");
+    await wait(50);
+    await log("systemd", "Mounting Fs1 Filesystem");
+    fs = window.fs;
+    fs1FileHandle = window.fs1FileHandle;
+    write("[ ", "gray"); write("OK", "green"); write(" ] ", "gray"); write("Mounted ", "gray"), write("Fs1 Filesystem.\n", "white");
+    write("Clearing ", "gray"); write("/tmp...\n", "white");
+    await wait(50);
+    await log("systemd", "Clearing /tmp");
+    let code
+    for (const path in fs.files)if (path.startsWith("/tmp/") && path != "/tmp/") delete fs.files[path];
+    write("[ ", "gray"); write("OK", "green"); write(" ] ", "gray"); write("Cleared ", "gray"), write("/tmp.\n", "white");
+    await log("Boot", "Running config.js");
+    write("Starting ", "gray"); write("Configuration Service...\n", "white");
+    await wait(50);
+    code = await runFile("/etc/config.js");
+    if (code) { kernelPanic("config failed to load"); return; }
+    write("[ ", "gray"); write("OK", "green"); write(" ] ", "gray"); write("Started ", "gray"), write("Configuration Service.\n", "white");
+    write("Starting ", "gray"); write("Sound Service...\n", "white");
+    await wait(50);
+    await log("systemd", "Starting Sound Service");
+    code = await runFile("/krnl/sound/sap.js");
+    if (code) { kernelPanic("sound failed to load"); return; }
+    write("[ ", "gray"); write("OK", "green"); write(" ] ", "gray"); write("Started ", "gray"), write("Sound Service.\n", "white");
+    write("Starting ", "gray"); write("Theme Service...\n", "white");
+    await wait(50);
+    await log("systemd", "Starting Theme Service");
+    document.body.style.backgroundColor = window.shell.theme?.[2] || "black";
+    write("[ ", "gray"); write("OK", "green"); write(" ] ", "gray"); write("Started ", "gray"), write("Theme Service.\n", "white");
+    await log("Boot", "Running /boot/boot.js", true);
+    const setupDone = await isSetupComplete();
+    if (!setupDone) {
+        write("Preparing ", "gray"); write("Aliases...\n", "white");
+        await wait(50);
+        await log("systemd", "Preparing Aliases");
+        window.shell.aliases = {};
+        write("[ ", "gray"); write("OK", "green"); write(" ] ", "gray"); write("Prepared ", "gray"), write("Aliases.\n", "white");
+        write("Starting ", "gray"); write("Bash Interpreter...\n", "white");
+        await wait(50);
+        await log("systemd", "Starting Bash Interpreter");
+        code = await runFile("/bin/bash.js");
+        if (code) { kernelPanic("bash interpreter failed to load"); return; }
+        write("[ ", "gray"); write("OK", "green"); write(" ] ", "gray"); write("Started ", "gray"), write("Bash Interpreter.\n", "white");
+        write("Starting ", "gray"); write("User Account Setup.\n", "white");
+        await wait(50);
+        await log("systemd", "Starting User Account Setup");
+        write("Starting ", "gray"); write("Log Service...\n", "white");
+        await wait(50);
+        await log("systemd", "Starting Log Service");
+        window.log = log2;
+        write("[ ", "gray"); write("OK", "green"); write(" ] ", "gray"); write("Started ", "gray"), write("Log Service.\n", "white");
+        if (window.writebackup) {
+            write = window.writebackup;
+            window.write = window.writebackup;
+        }
+        code = await runFile("/etc/uas/uas.js");
+        if (code) { kernelPanic("uas corrupted or failed to load"); return; }
+    } else {
+        write("Starting ", "gray"); write("Font Service...\n", "white");
+        await wait(50);
+        await log("systemd", "Starting Font Service");
+        write("[ ", "gray"); write("OK", "green"); write(" ] ", "gray"); write("Started ", "gray"), write("Font Service.\n", "white");
+        write("Starting ", "gray"); write("Boot Process...\n", "white");
+        await wait(50);
+        await log("systemd", "Starting Boot Process");
+        write("Starting ", "gray"); write("Write Service...\n", "white");
+        await wait(50);
+        await log("systemd", "Starting Write Service");
+        window.write = write;
+        write("[ ", "gray"); write("OK", "green"); write(" ] ", "gray"); write("Started ", "gray"), write("Write Service.\n", "white");
+        write("Starting ", "gray"); write("Log Service...\n", "white");
+        await wait(50);
+        await log("systemd", "Starting Log Service");
+        window.log = log2;
+        write("[ ", "gray"); write("OK", "green"); write(" ] ", "gray"); write("Started ", "gray"), write("Log Service.\n", "white");
+        code = await applyFontFromFile();
+        if (code) { kernelPanic("font not found"); return; }
+        if (window.writebackup) {
+            write = window.writebackup;
+            window.write = window.writebackup;
+        }
+        code = await runFile("/boot/boot.js");
+        if (code) { kernelPanic("boot corrupted"); return; }
+    }
+}
+if (window.writebackup) {
+    window.writebackup = write;
+    write = (t,c,b,s) => {};
+}
+write("Starting ", "gray"); write("Boot Process...\n", "white");
+await wait(50);
+write("Starting ", "gray"); write("Log Service...\n", "white");
+await wait(50);
+window.log = log;
+write("[ ", "gray"); write("OK", "green"); write(" ] ", "gray"); write("Started ", "gray"), write("Log Service.\n", "white");
+boot();
+/etc/uas/setup.conf
+1
+setup=1
+/etc/uas/uas.js
+84
+window.shell.userPermission = 4 
+clear();
+if (!fs.meta["/etc"]) fs.meta["/etc"] = {};
+write("Browser Linux Setup\n");
+newline();
+let userName = "";
+while (!userName) {
+    await executeCommand('read -p "username: " REPLY');
+    userName = (window.shell.REPLY || "").trim();
+    if (!userName) {
+        write("enter a valid username\n");
+    }
+}
+await setVar("userName", userName);
+async function readInput(promptText = "") {
+    return new Promise(resolve => {
+        let inputBuffer = "";
+
+        function render() {
+            let text = "";
+            for (char of inputBuffer) text += "*";
+            
+            currentLine.textContent = promptText + text;
+            currentLine.style.color = window.shell.theme?.[0] || "white";
+            currentLine.style.backgroundColor = window.shell.theme?.[1] || "black";
+            currentLine.style.fontSize = window.shell.theme?.[3] || "14px";
+            currentLine.style.fontFamily = getComputedStyle(document.body).fontFamily;
+        }
+
+        function onKey(e) {
+            if (e.ctrlKey || e.metaKey || e.altKey) return;
+
+            if (e.key === "Enter") {
+                window.removeEventListener("keydown", onKey);
+                resolve(inputBuffer);
+                return;
+            }
+
+            if (e.key === "Backspace") {
+                inputBuffer = inputBuffer.slice(0, -1);
+                render();
+                return;
+            }
+
+            if (e.key.length === 1) {
+                inputBuffer += e.key;
+                render();
+            }
+        }
+
+        let currentLine = document.createElement("div");
+        screen.appendChild(currentLine);
+
+        render();
+
+        setTimeout(() => {
+            window.addEventListener("keydown", onKey);
+        }, 0);
+    });
+}
+let newpass = "";
+async function request() {
+    const pass = await readInput("password: ");
+    const pass2 = await readInput("confirm password: ");
+    newpass = pass
+    return pass == pass2
+}
+while (true) {
+    let condition = await request();
+    if (condition && newpass != "") break;
+    write("Passwords do not match or is invalid\n");
+}
+window.fs.meta["/etc"][".superuser"] = newpass;
+await wait(1000);
+fs.files["/etc/uas/setup.conf"] = "setup=1";
+let config = fs.files["/etc/var.conf"] || "";
+let lines = config.split("\n");
+lines.pop();
+config = lines.join("\n");
+fs.files["/etc/profiles/default.conf"] = config;
+write("\nRestarting...\n");
+await saveFS1();
+await wait(1000);
+location.reload();
+/home/.bashrc
+3
+# ~/.bashrc: executed by bash(1) for non-login shells.
+# Aliases
+alias ll="ls -al"
+/home/.bash_history
+0
+/home/README
+9
+# Welcome to BrowserLinux
+
+A Javascript OS
+---
+
+- View the wiki by typing `wiki`
+- Type `help` for instructions
+
+---
+/home/Music/Biodiversity
+1051
+440
+C#4 2243
+F4 2243
+A#4 2243
+2243
+F#4 2243
+C#4 2243
+A#4 2243
+2243
+C#4 2243
+G#4 2243
+F4 2243
+2243
+G#4 2243
+D#4 2243
+C4 2243
+2243
+A#3 280
+A#5 280
+C#4 2243
+F4 2243
+A#4 2243
+A#2 2243
+280
+C#6 280
+280
+A#3 280
+A#5 280
+421
+A#3 280
+140
+A#5 280
+280
+A#3 280
+G#5 280
+280
+A#3 280
+F5 280
+561
+F#3 280
+A#4 2243
+F#4 2243
+C#4 2243
+F#2 2243
+561
+F#3 280
+421
+F#3 280
+421
+F#3 280
+280
+F#3 280
+561
+C#3 280
+G#5 280
+F4 2243
+G#4 2243
+C#4 2243
+C#2 2243
+280
+F5 280
+280
+C#3 280
+G#5 280
+421
+C#3 280
+140
+G#5 280
+280
+C#3 280
+F5 280
+280
+C#3 280
+C#5 280
+561
+G#3 280
+C4 2243
+G#4 2243
+D#4 2243
+G#2 2243
+561
+G#3 280
+421
+G#3 280
+421
+G#3 280
+280
+G#3 280
+561
+A#3 280
+A#5 280
+C#4 2243
+F4 2243
+A#4 2243
+A#2 2243
+280
+C#6 280
+280
+A#3 280
+A#5 280
+421
+A#3 280
+140
+A#5 280
+280
+A#3 280
+G#5 280
+280
+A#3 280
+F5 280
+561
+F#3 280
+A#4 2243
+F#4 2243
+C#4 2243
+F#2 2243
+561
+F#3 280
+421
+F#3 280
+421
+F#3 280
+280
+F#3 280
+561
+C#3 280
+G#5 280
+F4 2243
+G#4 2243
+C#4 2243
+C#2 2243
+280
+F5 280
+280
+C#3 280
+G#5 280
+421
+C#3 280
+140
+G#5 280
+280
+C#3 280
+F5 280
+280
+C#3 280
+C#5 280
+561
+G#3 280
+C4 2243
+G#4 2243
+D#4 2243
+G#2 2243
+561
+G#3 280
+421
+G#3 280
+421
+G#3 280
+280
+G#3 280
+561
+A#3 280
+A#5 280
+C#4 2243
+F4 2243
+A#4 2243
+A#2 2243
+280
+C#6 280
+280
+A#3 280
+A#5 280
+421
+A#3 280
+140
+A#5 280
+280
+A#3 280
+G#5 280
+280
+A#3 280
+F5 280
+561
+F#3 280
+A#4 2243
+F#4 2243
+C#4 2243
+F#2 2243
+561
+F#3 280
+421
+F#3 280
+421
+F#3 280
+280
+F#3 280
+561
+C#3 280
+G#5 280
+F4 2243
+G#4 2243
+C#4 2243
+C#2 2243
+280
+F5 280
+280
+C#3 280
+G#5 280
+421
+C#3 280
+140
+G#5 280
+280
+C#3 280
+F5 280
+280
+C#3 280
+C#5 280
+561
+G#3 280
+C4 2243
+G#4 2243
+D#4 2243
+G#2 2243
+561
+G#3 280
+421
+G#3 280
+421
+G#3 280
+280
+G#3 280
+561
+A#3 280
+A#5 280
+C#4 2243
+F4 2243
+A#4 2243
+A#2 2243
+280
+F5 280
+280
+A#3 280
+280
+F5 280
+140
+A#3 280
+421
+A#3 280
+F5 280
+280
+A#3 280
+G#5 280
+561
+F#3 280
+A#5 280
+A#4 2243
+C#4 2243
+F#4 2243
+F#2 2243
+280
+F#5 280
+280
+F#3 280
+280
+F#5 280
+140
+F#3 280
+421
+F#3 280
+F#5 280
+280
+F#3 280
+C#5 280
+280
+F#5 280
+280
+C#3 280
+F5 280
+G#4 2243
+F4 2243
+C#4 2243
+C#2 2243
+280
+G#5 280
+280
+C#3 280
+280
+G#5 280
+140
+C#3 280
+421
+C#3 280
+F5 280
+280
+C#3 280
+D#5 280
+561
+G#3 280
+G#5 280
+C4 2243
+D#4 2243
+G#4 2243
+G#2 2243
+280
+D#5 280
+280
+G#3 280
+280
+C5 280
+140
+G#3 280
+421
+G#3 280
+D#5 280
+280
+G#3 280
+G#5 280
+561
+A#3 280
+A#5 280
+C#4 2243
+F4 2243
+A#4 2243
+A#2 2243
+280
+F5 280
+280
+A#3 280
+280
+F5 280
+140
+A#3 280
+421
+A#3 280
+F5 280
+280
+A#3 280
+G#5 280
+561
+F#3 280
+A#5 280
+A#4 2243
+C#4 2243
+F#4 2243
+F#2 2243
+280
+F#5 280
+280
+F#3 280
+280
+F#5 280
+140
+F#3 280
+421
+F#3 280
+F#5 280
+280
+F#3 280
+C#5 280
+280
+F#5 280
+280
+C#3 280
+F5 280
+G#4 2243
+F4 2243
+C#4 2243
+C#2 2243
+280
+G#5 280
+280
+C#3 280
+280
+G#5 280
+140
+C#3 280
+421
+C#3 280
+F5 280
+280
+C#3 280
+D#5 280
+561
+G#3 280
+G#5 280
+C4 2243
+D#4 2243
+G#4 2243
+G#2 2243
+280
+D#5 280
+280
+G#3 280
+280
+C5 280
+140
+G#3 280
+421
+G#3 280
+D#5 280
+280
+G#3 280
+G#5 280
+561
+A#3 280
+A#5 280
+F4 2243
+C#4 2243
+A#4 2243
+A#2 2243
+280
+F5 280
+280
+A#3 280
+280
+F5 280
+140
+A#3 280
+421
+A#3 280
+F5 280
+280
+A#3 280
+G#5 280
+561
+F#3 280
+A#5 280
+A#4 2243
+C#4 2243
+F#4 2243
+F#2 2243
+280
+F#5 280
+280
+F#3 280
+280
+F#5 280
+140
+F#3 280
+421
+F#3 280
+F#5 280
+280
+F#3 280
+C#5 280
+280
+F#5 280
+280
+C#3 280
+F5 280
+G#4 2243
+F4 2243
+C#4 2243
+C#2 2243
+280
+G#5 280
+280
+C#3 280
+280
+G#5 280
+140
+C#3 280
+421
+C#3 280
+F5 280
+280
+C#3 280
+D#5 280
+561
+G#3 280
+G#5 280
+C4 2243
+D#4 2243
+G#4 2243
+G#2 2243
+280
+D#5 280
+280
+G#3 280
+280
+C5 280
+140
+G#3 280
+421
+G#3 280
+D#5 280
+280
+G#3 280
+G#5 280
+561
+A#3 280
+A#5 280
+C#4 2243
+F4 2243
+A#4 2243
+A#2 2243
+280
+F5 280
+280
+A#3 280
+280
+F5 280
+140
+A#3 280
+421
+A#3 280
+F5 280
+280
+A#3 280
+G#5 280
+561
+F#3 280
+A#5 280
+A#4 2243
+C#4 2243
+F#4 2243
+F#2 2243
+280
+F#5 280
+280
+F#3 280
+280
+F#5 280
+140
+F#3 280
+421
+F#3 280
+F#5 280
+280
+F#3 280
+C#5 280
+280
+F#5 280
+280
+C#3 280
+F5 280
+G#4 2243
+F4 2243
+C#4 2243
+C#2 2243
+280
+G#5 280
+280
+C#3 280
+280
+G#5 280
+140
+C#3 280
+421
+C#3 280
+F5 280
+280
+C#3 280
+D#5 280
+561
+G#3 280
+G#5 280
+C4 2243
+D#4 2243
+G#4 2243
+G#2 2243
+280
+D#5 280
+280
+G#3 280
+280
+C5 280
+140
+G#3 280
+421
+G#3 280
+D#5 280
+280
+G#3 280
+G#5 280
+561
+B3 280
+B5 280
+B4 2243
+F#4 2243
+D4 2243
+B2 2243
+280
+D6 280
+280
+B3 280
+B5 280
+421
+B3 280
+140
+B5 280
+280
+B3 280
+A5 280
+280
+B3 280
+F#5 280
+561
+G3 280
+G4 2243
+D4 2243
+B4 2243
+G2 2243
+561
+G3 280
+421
+G3 280
+421
+G3 280
+280
+G3 280
+561
+D3 280
+A5 280
+D4 2243
+A4 2243
+F#4 2243
+D2 2243
+280
+F#5 280
+280
+D3 280
+A5 280
+421
+D3 280
+140
+A5 280
+280
+D3 280
+F#5 280
+280
+D3 280
+D5 280
+561
+A3 280
+A4 2243
+E4 2243
+C#4 2243
+A2 2243
+561
+A3 280
+421
+A3 280
+421
+A3 280
+280
+A3 280
+561
+B3 280
+B5 280
+D4 2243
+F#4 2243
+B4 2243
+B2 2243
+280
+D5 280
+D6 280
+280
+B3 280
+F#5 280
+B5 280
+280
+D5 280
+140
+B3 280
+140
+B5 280
+280
+B3 280
+D5 280
+A5 280
+280
+B3 280
+F#5 280
+280
+D5 280
+280
+G3 280
+B5 280
+G4 2243
+D4 2243
+B4 2243
+G2 2243
+280
+C#6 280
+280
+G3 280
+D6 280
+280
+E6 280
+140
+G3 280
+140
+F#6 280
+280
+G3 280
+D6 280
+280
+G3 280
+F#6 280
+561
+D3 280
+B5 280
+A5 280
+D4 2243
+A4 2243
+F#4 2243
+D2 2243
+280
+C#6 280
+F#5 280
+280
+D3 280
+D6 280
+A5 280
+280
+E6 280
+140
+D3 280
+140
+D6 280
+A5 280
+280
+D3 280
+C#6 280
+F#5 280
+280
+D3 280
+B5 280
+D5 280
+280
+F#5 280
+280
+A3 280
+A5 280
+A4 2243
+E4 2243
+C#4 2243
+A2 2243
+280
+E5 280
+280
+A3 280
+A5 280
+280
+E5 280
+140
+A3 280
+140
+A5 280
+280
+A3 280
+E5 280
+280
+A3 280
+C#5 280
+280
+E5 280
+280
+B3 280
+B5 280
+D4 2243
+F#4 2243
+B4 2243
+B2 2243
+280
+D5 280
+280
+B3 280
+F#5 280
+280
+D5 280
+140
+B3 280
+140
+B5 280
+280
+B3 280
+D5 280
+280
+B3 280
+F#5 280
+280
+D5 280
+280
+G3 280
+B5 280
+G4 2243
+D4 2243
+B4 2243
+G2 2243
+280
+C#6 280
+280
+G3 280
+D6 280
+280
+E6 280
+140
+G3 280
+140
+F#6 280
+280
+G3 280
+D6 280
+280
+G3 280
+F#6 280
+561
+D3 280
+B5 280
+D4 2243
+A4 2243
+F#4 2243
+D2 2243
+280
+C#6 280
+280
+D3 280
+D6 280
+280
+E6 280
+140
+D3 280
+140
+D6 280
+280
+D3 280
+C#6 280
+280
+D3 280
+B5 280
+280
+F#5 280
+280
+A3 280
+A5 280
+A4 2243
+E4 2243
+C#4 2243
+A2 2243
+280
+E5 280
+280
+A3 280
+A5 280
+280
+E5 280
+140
+A3 280
+140
+A5 280
+280
+A3 280
+E5 280
+280
+A3 280
+C#5 280
+280
+E5 280
+280
+B3 280
+B5 280
+B4 2243
+F#4 2243
+D4 2243
+B2 2243
+280
+D5 280
+280
+B3 280
+F#5 280
+280
+D5 280
+140
+B3 280
+140
+B5 280
+280
+B3 280
+D5 280
+280
+B3 280
+F#5 280
+280
+D5 280
+280
+G3 280
+B5 280
+G4 2243
+D4 2243
+B4 2243
+G2 2243
+280
+C#6 280
+280
+G3 280
+D6 280
+280
+E6 280
+140
+G3 280
+140
+F#6 280
+280
+G3 280
+D6 280
+280
+G3 280
+F#6 280
+561
+D3 280
+B5 280
+D4 2243
+A4 2243
+F#4 2243
+D2 2243
+280
+C#6 280
+280
+D3 280
+D6 280
+280
+E6 280
+140
+D3 280
+140
+D6 280
+280
+D3 280
+C#6 280
+280
+D3 280
+B5 280
+280
+F#5 280
+280
+A3 280
+A5 280
+A4 2243
+E4 2243
+C#4 2243
+A2 2243
+280
+E5 280
+280
+A3 280
+A5 280
+280
+E5 280
+140
+A3 280
+140
+A5 280
+280
+A3 280
+E5 280
+280
+A3 280
+C#5 280
+280
+E5 280
+280
+B3 280
+B5 280
+B4 2243
+F#4 2243
+D4 2243
+B2 2243
+280
+D6 280
+280
+B3 280
+B5 280
+421
+B3 280
+140
+B5 280
+280
+B3 280
+A5 280
+280
+B3 280
+F#5 280
+561
+G3 280
+G4 2243
+D4 2243
+B4 2243
+G2 2243
+561
+G3 280
+421
+G3 280
+421
+G3 280
+280
+G3 280
+561
+D3 280
+A5 280
+D4 2243
+A4 2243
+F#4 2243
+D2 2243
+280
+F#5 280
+280
+D3 280
+A5 280
+421
+D3 280
+140
+A5 280
+280
+D3 280
+F#5 280
+280
+D3 280
+D5 280
+561
+A3 280
+A4 2243
+E4 2243
+C#4 2243
+A2 2243
+561
+A3 280
+421
+A3 280
+421
+A3 280
+280
+A3 280
+561
+B4 2243
+F#4 2243
+D4 2243
+2243
+G4 2243
+D4 2243
+B4 2243
+2243
+D4 2243
+A4 2243
+F#4 2243
+2243
+A4 2243
+E4 2243
+C#4 2243
+/home/Music/VivaldiWinter
+4783
+440
+F3 200
+400
+F3 200
+400
+F3 200
+400
+F3 200
+400
+F3 200
+400
+F3 200
+400
+F3 200
+400
+F3 200
+400
+F3 200
+G4 200
+400
+F3 200
+G4 200
+400
+F3 200
+G4 200
+400
+F3 200
+G4 200
+400
+F3 200
+G4 200
+400
+F3 200
+G4 200
+400
+F3 200
+G4 200
+400
+F3 200
+G4 200
+400
+F3 200
+G4 200
+C#5 200
+400
+F3 200
+G4 200
+C#5 200
+400
+F3 200
+G4 200
+C#5 200
+400
+F3 200
+G4 200
+C#5 200
+400
+F3 200
+G4 200
+C#5 200
+400
+F3 200
+G4 200
+C#5 200
+400
+F3 200
+G4 200
+C#5 200
+400
+F3 200
+G4 200
+C#5 200
+400
+A#5 50
+F3 200
+G4 200
+C#5 200
+50
+C6 50
+50
+A#5 50
+300
+A#5 50
+F3 200
+G4 200
+C#5 200
+50
+C6 50
+50
+A#5 50
+300
+A#5 50
+F3 200
+G4 200
+C#5 200
+50
+C6 50
+50
+A#5 50
+300
+A#5 50
+F3 200
+G4 200
+C#5 200
+50
+C6 50
+50
+A#5 50
+300
+A#5 50
+F3 200
+G4 200
+C#5 200
+50
+C6 50
+50
+A#5 50
+300
+A#5 50
+F3 200
+G4 200
+C#5 200
+50
+C6 50
+50
+A#5 50
+300
+A#5 50
+F3 200
+G4 200
+C#5 200
+50
+C6 50
+50
+A#5 50
+300
+A#5 50
+F3 200
+G4 200
+C#5 200
+50
+C6 50
+50
+A#5 50
+300
+A#5 50
+E3 200
+G4 200
+C#5 200
+50
+C6 50
+50
+A#5 50
+300
+A#5 50
+E3 200
+G4 200
+C#5 200
+50
+C6 50
+50
+A#5 50
+300
+A#5 50
+E3 200
+G4 200
+C#5 200
+50
+C6 50
+50
+A#5 50
+300
+A#5 50
+E3 200
+G4 200
+C#5 200
+50
+C6 50
+50
+A#5 50
+300
+A#5 50
+E3 200
+G4 200
+C#5 200
+50
+C6 50
+50
+A#5 50
+300
+A#5 50
+E3 200
+G4 200
+C#5 200
+50
+C6 50
+50
+A#5 50
+300
+A#5 50
+E3 200
+G4 200
+C#5 200
+50
+C6 50
+50
+A#5 50
+300
+A#5 50
+E3 200
+G4 200
+C#5 200
+50
+C6 50
+50
+A#5 50
+300
+G#5 50
+F3 200
+G#4 200
+C5 200
+50
+A#5 50
+50
+G#5 50
+300
+G#5 50
+F3 200
+G#4 200
+C5 200
+50
+A#5 50
+50
+G#5 50
+300
+G#5 50
+F3 200
+G#4 200
+C5 200
+50
+A#5 50
+50
+G#5 50
+300
+G#5 50
+F3 200
+G#4 200
+C5 200
+50
+A#5 50
+50
+G#5 50
+300
+G#5 50
+F3 200
+F4 200
+C5 200
+50
+A#5 50
+50
+G#5 50
+300
+G#5 50
+F3 200
+F4 200
+C5 200
+50
+A#5 50
+50
+G#5 50
+300
+G#5 50
+F3 200
+F4 200
+C5 200
+50
+A#5 50
+50
+G#5 50
+300
+G#5 50
+F3 200
+F4 200
+C5 200
+50
+A#5 50
+50
+G#5 50
+300
+C#5 50
+F3 200
+F4 200
+A#4 200
+50
+D#5 50
+50
+C#5 50
+300
+C#5 50
+F3 200
+F4 200
+A#4 200
+50
+D#5 50
+50
+C#5 50
+300
+C#5 50
+F3 200
+F4 200
+A#4 200
+50
+D#5 50
+50
+C#5 50
+300
+C#5 50
+F3 200
+F4 200
+A#4 200
+50
+D#5 50
+50
+C#5 50
+300
+C#5 50
+F3 200
+F4 200
+A#4 200
+50
+D#5 50
+50
+C#5 50
+300
+C#5 50
+F3 200
+F4 200
+A#4 200
+50
+D#5 50
+50
+C#5 50
+300
+C#5 50
+F3 200
+F4 200
+A#4 200
+50
+D#5 50
+50
+C#5 50
+300
+C#5 50
+F3 200
+F4 200
+A#4 200
+50
+D#5 50
+50
+C#5 50
+300
+D#5 50
+F3 200
+A4 200
+C5 200
+50
+F5 50
+50
+D#5 50
+300
+D#5 50
+F3 200
+A4 200
+C5 200
+50
+F5 50
+50
+D#5 50
+300
+D#5 50
+F3 200
+A4 200
+C5 200
+50
+F5 50
+50
+D#5 50
+300
+D#5 50
+F3 200
+A4 200
+C5 200
+50
+F5 50
+50
+D#5 50
+300
+D#5 50
+F3 200
+A4 200
+C5 200
+50
+F5 50
+50
+D#5 50
+300
+D#5 50
+F3 200
+A4 200
+C5 200
+50
+F5 50
+50
+D#5 50
+300
+D#5 50
+F3 200
+A4 200
+C5 200
+50
+F5 50
+50
+D#5 50
+300
+D#5 50
+F3 200
+A4 200
+C5 200
+50
+F5 50
+50
+D#5 50
+300
+D5 50
+F3 200
+B4 200
+50
+D#5 50
+50
+D5 50
+300
+D5 50
+F3 200
+G4 200
+B4 200
+50
+D#5 50
+50
+D5 50
+300
+D5 50
+F3 200
+G4 200
+B4 200
+50
+D#5 50
+50
+D5 50
+300
+D5 50
+F3 200
+G4 200
+B4 200
+50
+D#5 50
+50
+D5 50
+300
+D5 50
+F3 200
+G4 200
+B4 200
+50
+D#5 50
+50
+D5 50
+300
+D5 50
+F3 200
+G4 200
+B4 200
+50
+D#5 50
+50
+D5 50
+300
+D5 50
+F3 200
+B4 200
+50
+D#5 50
+50
+D5 50
+300
+D5 50
+F3 200
+B4 200
+50
+D#5 50
+50
+D5 50
+300
+D#5 50
+F#3 200
+A4 200
+C5 200
+50
+F5 50
+50
+D#5 50
+300
+D#5 50
+F#3 200
+A4 200
+C5 200
+50
+F5 50
+50
+D#5 50
+300
+D#5 50
+F#3 200
+A4 200
+C5 200
+50
+F5 50
+50
+D#5 50
+300
+D#5 50
+F#3 200
+A4 200
+C5 200
+50
+F5 50
+50
+D#5 50
+300
+D#5 50
+F#3 200
+A4 200
+C5 200
+50
+F5 50
+50
+D#5 50
+300
+D#5 50
+F#3 200
+A4 200
+C5 200
+50
+F5 50
+50
+D#5 50
+300
+D#5 50
+F#3 200
+A4 200
+C5 200
+50
+F5 50
+50
+D#5 50
+300
+D#5 50
+F#3 200
+A4 200
+C5 200
+50
+F5 50
+50
+D#5 50
+300
+D5 50
+G3 200
+G4 200
+C5 200
+50
+D#5 50
+50
+D5 50
+300
+D5 50
+G3 200
+G4 200
+C5 200
+50
+D#5 50
+50
+D5 50
+300
+D5 50
+G3 200
+G4 200
+C5 200
+50
+D#5 50
+50
+D5 50
+300
+D5 50
+G3 200
+G4 200
+C5 200
+50
+D#5 50
+50
+D5 50
+300
+D5 50
+G2 200
+G4 200
+B4 200
+50
+D#5 50
+50
+D5 50
+300
+D5 50
+G2 200
+G4 200
+B4 200
+50
+D#5 50
+50
+D5 50
+300
+D5 50
+G2 200
+G4 200
+B4 200
+50
+D#5 50
+50
+D5 50
+300
+D5 50
+G2 200
+G4 200
+B4 200
+50
+D#5 50
+50
+D5 50
+300
+C5 200
+C3 800
+C4 800
+100
+C6 100
+100
+C6 100
+100
+G5 100
+100
+G5 100
+100
+D#5 100
+100
+D#5 100
+100
+C5 100
+100
+C5 200
+100
+C6 100
+100
+C6 100
+100
+G5 100
+100
+G5 100
+100
+D#5 100
+100
+D#5 100
+100
+C5 200
+100
+C6 100
+100
+A#5 100
+100
+G#5 100
+100
+G5 100
+100
+F5 100
+100
+D#5 100
+100
+D5 100
+100
+C5 200
+100
+C6 100
+100
+A#5 100
+100
+G#5 100
+100
+G5 100
+100
+F5 100
+100
+D#5 100
+100
+D5 100
+200
+C5 50
+100
+G4 50
+100
+C5 50
+100
+D#5 50
+100
+C5 50
+100
+G4 50
+100
+C5 50
+100
+D#5 50
+100
+C5 50
+100
+G4 50
+100
+C5 50
+100
+D#5 50
+100
+C5 50
+100
+G4 50
+100
+C5 50
+100
+D#5 50
+100
+C#4 25
+G4 50
+C3 200
+D#4 200
+25
+C4 25
+25
+C#4 25
+G#4 50
+25
+C4 25
+25
+C#4 25
+G4 50
+25
+C4 25
+25
+C#4 25
+25
+C4 25
+25
+C#4 25
+25
+C4 25
+25
+C#4 25
+25
+C4 25
+25
+C#4 50
+100
+C4 1
+C#4 50
+G4 50
+C3 200
+D#4 200
+50
+C4 50
+G#4 50
+50
+C#4 50
+G4 50
+50
+C4 50
+50
+C#4 100
+200
+C4 1
+G4 50
+C#4 100
+C3 200
+D#4 200
+50
+G#4 50
+50
+G4 50
+C4 100
+300
+G4 50
+C3 200
+C4 200
+D#4 200
+50
+G#4 50
+50
+G4 50
+300
+C4 1
+G4 50
+C3 200
+D#4 200
+50
+G#4 50
+50
+G4 50
+300
+G4 50
+C3 200
+C4 200
+D#4 200
+50
+G#4 50
+50
+G4 50
+300
+G4 50
+C3 200
+C4 200
+D#4 200
+50
+G#4 50
+50
+G4 50
+300
+G4 50
+C3 200
+C4 200
+D#4 200
+50
+G#4 50
+50
+G4 50
+300
+D#5 200
+C3 800
+C4 800
+G4 800
+D#4 800
+100
+D#6 100
+100
+D#6 100
+100
+C6 100
+100
+C6 100
+100
+G5 100
+100
+G5 100
+100
+D#5 100
+100
+D#5 200
+100
+D#6 100
+100
+D#6 100
+100
+C6 100
+100
+C6 100
+100
+G5 100
+100
+G5 100
+100
+D#5 100
+100
+D#6 100
+100
+D6 100
+100
+C6 100
+100
+B5 100
+100
+A5 100
+100
+G5 100
+100
+F5 100
+100
+D#5 200
+100
+D#6 100
+100
+D6 100
+100
+C6 100
+100
+B5 100
+100
+A5 100
+100
+G5 100
+100
+F5 100
+200
+D#5 50
+100
+C5 50
+100
+D#5 50
+100
+G5 50
+100
+D#5 50
+100
+C5 50
+100
+D#5 50
+100
+G5 50
+100
+D#5 50
+100
+C5 50
+100
+D#5 50
+100
+G5 50
+100
+D#5 50
+100
+C5 50
+100
+D#5 50
+100
+G5 50
+100
+F4 25
+G4 50
+C3 200
+C4 200
+25
+D#4 25
+25
+F4 25
+G#4 50
+25
+D#4 25
+25
+F4 25
+G4 50
+25
+D#4 25
+25
+F4 25
+25
+D#4 25
+25
+F4 25
+25
+D#4 25
+25
+F4 25
+25
+D#4 25
+25
+F4 50
+50
+D#4 50
+50
+F4 50
+G4 50
+C3 200
+C4 200
+50
+D#4 50
+G#4 50
+50
+F4 50
+G4 50
+50
+D#4 50
+50
+F4 100
+100
+D#4 100
+100
+G4 50
+F4 100
+C3 200
+C4 200
+50
+G#4 50
+50
+G4 50
+D#4 100
+300
+G4 50
+C3 200
+C4 200
+D#4 200
+50
+G#4 50
+50
+G4 50
+300
+G4 50
+C3 200
+C4 200
+D#4 200
+50
+G#4 50
+50
+G4 50
+300
+G4 50
+C3 200
+C4 200
+D#4 200
+50
+G#4 50
+50
+G4 50
+300
+G4 50
+C3 200
+C4 200
+D#4 200
+50
+G#4 50
+50
+G4 50
+300
+G4 50
+C3 200
+C4 200
+D#4 200
+50
+G#4 50
+50
+G4 50
+300
+G5 200
+C3 800
+C4 800
+G4 800
+D#4 800
+100
+G6 100
+100
+G6 100
+100
+D#6 100
+100
+D#6 100
+100
+C6 100
+100
+C6 100
+100
+G5 100
+100
+G5 200
+100
+G6 100
+100
+G6 100
+100
+D#6 100
+100
+D#6 100
+100
+C6 100
+100
+C6 100
+100
+G5 200
+100
+G6 100
+100
+F6 100
+100
+D#6 100
+100
+D6 100
+100
+C6 100
+100
+B5 100
+100
+A5 100
+100
+G5 200
+100
+G6 100
+100
+F6 100
+100
+D#6 100
+100
+D6 100
+100
+C6 100
+100
+B5 100
+100
+A5 100
+200
+G5 50
+100
+D#5 50
+100
+G5 50
+100
+C6 50
+100
+G5 50
+100
+D#5 50
+100
+G5 50
+100
+C6 50
+100
+G5 50
+100
+D#5 50
+100
+G5 50
+100
+C6 50
+100
+G5 50
+100
+D#5 50
+100
+G5 50
+100
+C6 50
+100
+C#5 25
+25
+C5 25
+25
+C#5 25
+25
+C5 25
+25
+C#5 25
+25
+C5 25
+25
+C#5 25
+25
+C5 25
+25
+C#5 50
+50
+C5 50
+50
+C#5 50
+50
+C5 50
+50
+C#5 100
+100
+C5 50
+300
+C5 200
+400
+C5 200
+400
+C#5 50
+C5 200
+50
+D5 50
+50
+C#5 50
+300
+C#5 50
+C5 200
+50
+D5 50
+50
+C#5 50
+300
+C#5 50
+C5 200
+50
+D5 50
+50
+C#5 50
+300
+C#5 50
+C5 200
+50
+D5 50
+50
+C#5 50
+300
+E5 50
+A#4 200
+50
+F5 50
+50
+E5 50
+300
+E5 50
+A#4 200
+50
+F5 50
+50
+E5 50
+300
+E5 50
+A#4 200
+50
+F5 50
+50
+E5 50
+300
+E5 50
+A#4 200
+50
+F5 50
+50
+E5 50
+300
+F3 200
+G#4 200
+F5 800
+200
+F4 100
+200
+F4 100
+F3 200
+G#4 200
+200
+F4 100
+200
+F4 100
+F3 200
+G#4 200
+200
+F4 100
+200
+F4 100
+F3 200
+G#4 200
+200
+F4 100
+200
+F4 100
+F3 200
+F#4 200
+A#4 200
+200
+F4 100
+200
+F4 100
+F3 200
+F#4 200
+A#4 200
+200
+F4 100
+200
+F4 100
+F3 200
+F#4 200
+A#4 200
+200
+F4 100
+200
+F4 100
+F3 200
+F#4 200
+A#4 200
+200
+F4 100
+200
+F4 100
+D#3 200
+A4 200
+C5 200
+200
+F4 100
+200
+F4 100
+D#3 200
+A4 200
+C5 200
+200
+F4 100
+200
+F4 100
+D#3 200
+A4 200
+C5 200
+200
+F4 100
+200
+F4 100
+D#3 200
+A4 200
+C5 200
+200
+F4 100
+200
+F4 100
+C#3 200
+A#4 200
+C#5 200
+200
+F4 100
+200
+F4 100
+C#3 200
+A#4 200
+C#5 200
+200
+F4 100
+200
+F4 100
+C#3 200
+A#4 200
+C#5 200
+200
+F4 100
+200
+F4 100
+C#3 200
+A#4 200
+C#5 200
+200
+F4 100
+200
+F4 100
+C#3 200
+B4 200
+C#5 200
+200
+F4 100
+200
+F4 100
+C#3 200
+B4 200
+C#5 200
+200
+F4 100
+200
+F4 100
+C#3 200
+B4 200
+C#5 200
+200
+F4 100
+200
+F4 100
+C#3 200
+B4 200
+C#5 200
+200
+F4 100
+200
+G4 100
+E4 100
+C3 800
+C5 800
+200
+E5 100
+G5 100
+100
+E5 100
+G5 100
+100
+E5 100
+G5 100
+100
+E5 100
+G5 100
+100
+E5 100
+G5 100
+100
+E5 100
+G5 100
+100
+E5 100
+G5 100
+200
+E5 100
+G5 100
+200
+E5 100
+G5 100
+200
+E5 100
+G5 100
+200
+F3 100
+C5 100
+F5 100
+G#5 100
+200
+F2 100
+G#4 100
+C5 100
+200
+F3 100
+C5 100
+F5 100
+G#5 100
+200
+F2 100
+G#4 100
+C5 100
+200
+F3 100
+C5 100
+F5 100
+G#5 100
+200
+F2 100
+G#4 100
+C5 100
+200
+F3 100
+C5 100
+F5 100
+G#5 100
+200
+F2 100
+G#4 100
+C5 100
+200
+C#5 100
+F5 100
+A#2 800
+G#4 800
+200
+C#5 100
+F5 100
+100
+C#5 100
+F5 100
+100
+C#5 100
+F5 100
+100
+C#5 100
+F5 100
+100
+C#5 100
+F5 100
+100
+C#5 100
+F5 100
+100
+C#5 100
+F5 100
+200
+C#5 100
+F5 100
+200
+C#5 100
+F5 100
+200
+C#5 100
+F5 100
+200
+D#3 100
+A#4 100
+D#5 100
+G5 100
+200
+D#2 100
+G4 100
+A#4 100
+C#5 100
+200
+D#3 100
+A#4 100
+D#5 100
+G5 100
+200
+D#2 100
+G4 100
+A#4 100
+C#5 100
+200
+D#3 100
+A#4 100
+G5 100
+D#5 100
+200
+D#2 100
+G4 100
+A#4 100
+C#5 100
+200
+D#3 100
+A#4 100
+G5 100
+D#5 100
+200
+D#2 100
+G4 100
+A#4 100
+C#5 100
+200
+C5 100
+D#5 100
+G#2 800
+G4 800
+200
+C5 100
+D#5 100
+100
+C5 100
+D#5 100
+100
+C5 100
+D#5 100
+100
+C5 100
+D#5 100
+100
+C5 100
+D#5 100
+100
+C5 100
+D#5 100
+100
+C5 100
+D#5 100
+200
+C5 100
+D#5 100
+200
+C5 100
+D#5 100
+200
+C5 100
+D#5 100
+200
+C#3 100
+G#4 100
+C#5 100
+F5 100
+200
+C#2 100
+F4 100
+G#4 100
+C5 100
+200
+C#3 100
+G#4 100
+C#5 100
+F5 100
+200
+C#2 100
+F4 100
+G#4 100
+C5 100
+200
+C#3 100
+G#4 100
+C#5 100
+F5 100
+200
+C#2 100
+F4 100
+G#4 100
+C5 100
+200
+C#3 100
+G#4 100
+C#5 100
+F5 100
+200
+C#2 100
+F4 100
+G#4 100
+C5 100
+200
+A#4 100
+C#5 100
+G2 800
+F4 800
+200
+A#4 100
+C#5 100
+100
+A#4 100
+C#5 100
+100
+A#4 100
+C#5 100
+100
+A#4 100
+C#5 100
+100
+A#4 100
+C#5 100
+100
+A#4 100
+C#5 100
+100
+A#4 100
+C#5 100
+200
+A#4 100
+C#5 100
+200
+A#4 100
+C#5 100
+200
+A#4 100
+C#5 100
+200
+C5 100
+E5 100
+C3 200
+G4 200
+200
+G4 100
+A#4 100
+C2 200
+E4 200
+200
+C5 100
+E5 100
+C3 200
+G4 200
+200
+G4 100
+A#4 100
+C2 200
+E4 200
+200
+C5 100
+E5 100
+C3 200
+G4 200
+200
+G4 100
+A#4 100
+C2 200
+E4 200
+200
+C5 100
+E5 100
+C3 200
+G4 200
+200
+G4 100
+A#4 100
+C2 200
+E4 200
+200
+F5 100
+F3 200
+F4 800
+G#4 800
+100
+E5 100
+100
+F5 100
+100
+G5 100
+100
+F5 100
+F3 200
+100
+G5 100
+100
+E5 100
+100
+F5 100
+100
+G5 100
+E3 200
+100
+F5 100
+100
+G5 100
+100
+G#5 100
+100
+G5 100
+E3 200
+100
+G#5 100
+100
+F5 100
+100
+G5 100
+100
+G#5 100
+F3 200
+100
+G5 100
+100
+G#5 100
+100
+A#5 100
+100
+G#5 100
+F3 200
+100
+A#5 100
+100
+G5 100
+100
+G#5 100
+100
+A#5 100
+G3 200
+100
+G#5 100
+100
+A#5 100
+100
+C6 100
+100
+A#5 100
+G3 200
+100
+C6 100
+100
+G#5 100
+100
+A#5 100
+100
+G#3 200
+400
+G#3 200
+100
+C6 100
+100
+C#6 100
+100
+D#6 100
+100
+F6 100
+G#3 200
+100
+C6 100
+100
+C#6 100
+100
+D#6 100
+100
+F6 100
+G#3 200
+100
+C6 100
+100
+C#6 100
+100
+D#6 100
+100
+F6 100
+G#3 200
+100
+D#6 100
+100
+C#6 100
+100
+C6 100
+100
+F6 100
+G#3 200
+100
+D#6 100
+100
+C#6 100
+100
+C6 100
+100
+F6 100
+G#3 200
+100
+D#6 100
+100
+C#6 100
+100
+C6 100
+100
+F6 100
+G#3 200
+100
+D#6 100
+100
+C#6 100
+100
+C6 100
+100
+F5 100
+G#3 200
+100
+G5 100
+100
+G#5 100
+100
+A#5 100
+100
+C6 100
+G#3 200
+100
+C#6 100
+100
+D#6 100
+100
+F6 100
+100
+F5 100
+G#3 200
+100
+G5 100
+100
+G#5 100
+100
+A#5 100
+100
+C6 100
+G#3 200
+100
+C#6 100
+100
+D#6 100
+100
+F6 100
+100
+A#3 200
+400
+A#3 200
+100
+A#5 100
+100
+C6 100
+100
+C#6 100
+100
+D#6 100
+G3 200
+100
+A#5 100
+100
+C6 100
+100
+C#6 100
+100
+D#6 100
+G3 200
+100
+A#5 100
+100
+C6 100
+100
+C#6 100
+100
+D#6 100
+G3 200
+100
+C#6 100
+100
+C6 100
+100
+A#5 100
+100
+D#6 100
+G3 200
+100
+C#6 100
+100
+C6 100
+100
+A#5 100
+100
+D#6 100
+G3 200
+100
+C#6 100
+100
+C6 100
+100
+A#5 100
+100
+D#6 100
+G3 200
+100
+C#6 100
+100
+C6 100
+100
+A#5 100
+100
+D#5 100
+G3 200
+100
+F5 100
+100
+G5 100
+100
+G#5 100
+100
+A#5 100
+G3 200
+100
+C6 100
+100
+C#6 100
+100
+D#6 100
+100
+D#5 100
+G3 200
+100
+F5 100
+100
+G5 100
+100
+G#5 100
+100
+A#5 100
+G3 200
+100
+C6 100
+100
+C#6 100
+100
+D#6 100
+100
+G#3 200
+400
+G#3 200
+100
+G#5 100
+100
+A#5 100
+100
+C6 100
+100
+C#6 100
+F3 200
+100
+G#5 100
+100
+A#5 100
+100
+C6 100
+100
+C#6 100
+F3 200
+100
+G#5 100
+100
+A#5 100
+100
+C6 100
+100
+C#6 100
+F3 200
+100
+C6 100
+100
+A#5 100
+100
+G#5 100
+100
+C#6 100
+F3 200
+100
+C6 100
+100
+A#5 100
+100
+G#5 100
+100
+C#6 100
+F3 200
+100
+C6 100
+100
+A#5 100
+100
+G#5 100
+100
+C#6 100
+F3 200
+100
+C6 100
+100
+A#5 100
+100
+G#5 100
+100
+E3 100
+G5 100
+100
+A#5 100
+100
+G#5 100
+100
+G5 100
+100
+C6 100
+D#3 200
+100
+A#5 100
+100
+G#5 100
+100
+G5 100
+100
+F5 100
+D3 200
+100
+G#5 100
+100
+G5 100
+100
+F5 100
+100
+A#5 100
+C#3 200
+100
+G#5 100
+100
+G5 100
+100
+F5 100
+100
+E5 100
+C3 200
+100
+C5 100
+100
+A#4 100
+100
+C5 100
+100
+G4 100
+C3 200
+100
+C5 100
+100
+A#4 100
+100
+C5 100
+100
+E5 100
+C3 200
+100
+G5 100
+100
+F5 100
+100
+G5 100
+100
+A#5 100
+C3 200
+100
+G5 100
+100
+F5 100
+100
+G5 100
+100
+E5 100
+C3 200
+100
+C5 100
+100
+A#4 100
+100
+C5 100
+100
+G4 100
+C3 200
+100
+C5 100
+100
+A#4 100
+100
+C5 100
+100
+E5 100
+C3 200
+100
+G5 100
+100
+F5 100
+100
+G5 100
+100
+A#5 100
+C3 200
+100
+G5 100
+100
+F5 100
+100
+G5 100
+100
+E5 100
+C3 200
+100
+A#5 100
+100
+G#5 100
+100
+A#5 100
+100
+E5 100
+C3 200
+100
+G5 100
+100
+F5 100
+100
+G5 100
+100
+A#4 100
+C3 200
+100
+C#5 100
+100
+C5 100
+100
+C#5 100
+100
+E4 100
+C3 200
+100
+G4 100
+100
+F4 100
+200
+G4 1
+C3 100
+E4 100
+A#4 100
+A#3 800
+100
+C3 100
+G4 100
+E4 100
+A#4 100
+100
+C3 100
+G4 100
+E4 100
+A#4 100
+100
+C3 100
+G4 100
+E4 100
+A#4 100
+100
+C3 100
+G4 100
+E4 100
+A#4 100
+100
+C3 100
+G4 100
+E4 100
+A#4 100
+100
+C3 100
+G4 100
+E4 100
+A#4 100
+100
+C3 100
+G4 100
+A#4 100
+100
+E4 1
+C3 100
+E4 100
+A#4 100
+100
+E4 1
+C3 100
+E4 100
+A#4 100
+100
+E4 1
+C3 100
+E4 100
+A#4 100
+100
+E4 1
+C3 100
+E4 100
+A#4 100
+100
+E4 1
+C3 100
+E4 100
+A#4 100
+100
+E4 1
+C3 100
+E4 100
+A#4 100
+100
+E4 1
+C3 100
+E4 100
+A#4 100
+100
+E4 1
+C3 100
+E4 100
+A#4 100
+100
+F3 800
+C4 800
+F4 800
+100
+C5 100
+100
+A#4 100
+100
+C5 100
+100
+G#4 100
+100
+C5 100
+100
+A#4 100
+100
+C5 100
+100
+F5 100
+100
+C5 100
+100
+A#4 100
+100
+C5 100
+100
+G#4 100
+100
+C5 100
+100
+A#4 100
+200
+C5 1
+F3 100
+D#5 100
+A5 100
+100
+F3 100
+C5 100
+D#5 100
+A5 100
+100
+F3 100
+C5 100
+D#5 100
+A5 100
+100
+F3 100
+C5 100
+D#5 100
+A5 100
+100
+F3 100
+C5 100
+D#5 100
+A5 100
+100
+F3 100
+C5 100
+D#5 100
+A5 100
+100
+F3 100
+C5 100
+D#5 100
+A5 100
+100
+F3 100
+C5 100
+D#5 100
+A5 100
+100
+F3 100
+A4 100
+D#5 100
+A5 100
+100
+F3 100
+A4 100
+D#5 100
+A5 100
+100
+F3 100
+A4 100
+D#5 100
+A5 100
+100
+F3 100
+A4 100
+D#5 100
+A5 100
+100
+F3 100
+A4 100
+D#5 100
+A5 100
+100
+F3 100
+A4 100
+D#5 100
+A5 100
+100
+F3 100
+A4 100
+D#5 100
+A5 100
+100
+F3 100
+A4 100
+D#5 100
+A5 100
+100
+A#5 100
+A#2 800
+F4 800
+100
+D5 100
+100
+C5 100
+100
+D5 100
+100
+F5 100
+100
+D5 100
+100
+C5 100
+100
+D5 100
+100
+A#4 100
+100
+D5 100
+100
+C5 100
+100
+D5 100
+100
+F5 100
+100
+D5 100
+100
+C5 100
+100
+D5 100
+100
+G3 100
+D4 100
+F5 100
+B5 100
+100
+G3 100
+D4 100
+F5 100
+B5 100
+100
+G3 100
+D4 100
+F5 100
+B5 100
+100
+G3 100
+D4 100
+F5 100
+B5 100
+100
+G3 100
+D4 100
+F5 100
+B5 100
+100
+G3 100
+D4 100
+F5 100
+B5 100
+100
+G3 100
+D4 100
+F5 100
+B5 100
+100
+G3 100
+D4 100
+F5 100
+B5 100
+100
+G3 100
+B3 100
+F5 100
+B5 100
+100
+G3 100
+B3 100
+F5 100
+B5 100
+100
+G3 100
+B3 100
+F5 100
+B5 100
+100
+G3 100
+B3 100
+F5 100
+B5 100
+100
+G3 100
+B3 100
+F5 100
+B5 100
+100
+G3 100
+B3 100
+F5 100
+B5 100
+100
+G3 100
+B3 100
+F5 100
+B5 100
+100
+G3 100
+B3 100
+F5 100
+B5 100
+100
+C6 100
+C3 800
+G3 800
+100
+D#5 100
+100
+D5 100
+100
+D#5 100
+100
+G5 100
+100
+D#5 100
+100
+D5 100
+100
+D#5 100
+100
+C6 100
+100
+D#5 100
+100
+D5 100
+100
+D#5 100
+100
+G5 100
+100
+D#5 100
+100
+D5 100
+100
+C5 100
+100
+A#2 100
+F4 100
+G#4 100
+D5 100
+100
+A#2 100
+F4 100
+G#4 100
+D5 100
+100
+A#2 100
+F4 100
+G#4 100
+D5 100
+100
+A#2 100
+F4 100
+G#4 100
+D5 100
+100
+A#2 100
+F4 100
+G#4 100
+D5 100
+100
+A#2 100
+F4 100
+G#4 100
+D5 100
+100
+A#2 100
+F4 100
+G#4 100
+D5 100
+100
+A#2 100
+F4 100
+G#4 100
+D5 100
+100
+A#2 100
+D4 100
+G#4 100
+D5 100
+100
+A#2 100
+D4 100
+G#4 100
+D5 100
+100
+A#2 100
+D4 100
+G#4 100
+D5 100
+100
+A#2 100
+D4 100
+G#4 100
+D5 100
+100
+A#2 100
+D4 100
+G#4 100
+D5 100
+100
+A#2 100
+D4 100
+G#4 100
+D5 100
+100
+A#2 100
+D4 100
+G#4 100
+D5 100
+100
+A#2 100
+D4 100
+G#4 100
+D5 100
+100
+D#5 100
+D#3 800
+A#3 800
+100
+G4 100
+100
+F4 100
+100
+G4 100
+100
+D#5 100
+100
+G4 100
+100
+F4 100
+100
+G4 100
+100
+D#5 100
+100
+G4 100
+100
+F4 100
+100
+G4 100
+100
+D#5 100
+100
+G4 100
+100
+F4 100
+100
+G4 100
+100
+G#2 100
+C4 100
+F4 100
+D#5 100
+100
+G#2 100
+C4 100
+F4 100
+D#5 100
+100
+G#2 100
+C4 100
+F4 100
+D#5 100
+100
+G#2 100
+C4 100
+F4 100
+D#5 100
+100
+G#2 100
+C4 100
+F4 100
+D#5 100
+100
+G#2 100
+C4 100
+F4 100
+D#5 100
+100
+G#2 100
+C4 100
+F4 100
+D#5 100
+100
+G#2 100
+C4 100
+F4 100
+D#5 100
+100
+G#2 100
+C4 100
+F4 100
+D#5 100
+100
+G#2 100
+C4 100
+F4 100
+D#5 100
+100
+G#2 100
+C4 100
+F4 100
+D#5 100
+100
+G#2 100
+C4 100
+F4 100
+D#5 100
+100
+G#2 100
+C4 100
+F4 100
+D#5 100
+100
+G#2 100
+C4 100
+F4 100
+D#5 100
+100
+G#2 100
+C4 100
+F4 100
+D#5 100
+100
+G#2 100
+C4 100
+F4 100
+D#5 100
+100
+A#2 100
+A#3 100
+F4 100
+D5 100
+100
+A#2 100
+A#3 100
+F4 100
+D5 100
+100
+A#2 100
+A#3 100
+F4 100
+D5 100
+100
+A#2 100
+A#3 100
+F4 100
+D5 100
+100
+A#2 100
+A#3 100
+F4 100
+D5 100
+100
+A#2 100
+A#3 100
+F4 100
+D5 100
+100
+A#2 100
+A#3 100
+F4 100
+D5 100
+100
+A#2 100
+A#3 100
+F4 100
+D5 100
+100
+A#2 100
+A#3 100
+F4 100
+D5 100
+100
+A#2 100
+A#3 100
+F4 100
+D5 100
+100
+A#2 100
+A#3 100
+F4 100
+D5 100
+100
+A#2 100
+A#3 100
+F4 100
+D5 100
+100
+A#2 100
+A#3 100
+F4 100
+D5 100
+100
+A#2 100
+A#3 100
+F4 100
+D5 100
+100
+A#2 100
+A#3 100
+F4 100
+D5 100
+100
+A#2 100
+A#3 100
+F4 100
+D5 100
+100
+D#3 200
+A#3 800
+G4 800
+D#5 800
+400
+D#3 200
+400
+D#3 200
+400
+D#3 200
+400
+D#3 200
+F4 200
+400
+D#3 200
+F4 200
+400
+D#3 200
+F4 200
+400
+D#3 200
+F4 200
+400
+D#3 200
+F4 200
+G#4 200
+400
+D#3 200
+F4 200
+G#4 200
+400
+D#3 200
+F4 200
+G#4 200
+400
+D#3 200
+F4 200
+G#4 200
+400
+D#3 200
+F4 200
+A#4 200
+G#4 200
+400
+D#3 200
+F4 200
+A#4 200
+G#4 200
+400
+D#3 200
+F4 200
+A#4 200
+G#4 200
+400
+D#3 200
+F4 200
+A#4 200
+G#4 200
+400
+D3 200
+F4 200
+A#4 200
+G#4 200
+400
+D3 200
+F4 200
+A#4 200
+G#4 200
+400
+D3 200
+F4 200
+A#4 200
+G#4 200
+400
+D3 200
+F4 200
+A#4 200
+G#4 200
+400
+D#3 200
+G4 200
+A#4 200
+400
+D#3 200
+G4 200
+A#4 200
+400
+D#3 200
+G4 200
+A#4 200
+400
+D#3 200
+G4 200
+A#4 200
+400
+C#5 100
+D#3 200
+A#3 200
+G4 200
+200
+C#5 100
+200
+C#5 100
+D#3 200
+A#3 200
+G4 200
+200
+C#5 100
+200
+C#5 100
+D#3 200
+A#3 200
+G4 200
+200
+C#5 100
+200
+C#5 100
+D#3 200
+A#3 200
+G4 200
+200
+C#5 100
+200
+G#2 200
+C4 200
+D#4 200
+C5 200
+400
+G#2 200
+C4 200
+D#4 200
+C5 200
+400
+G#2 200
+C4 200
+D#4 200
+C5 200
+400
+G#2 200
+C4 200
+D#4 200
+C5 200
+400
+D#5 100
+F2 200
+C4 200
+A4 200
+200
+D#5 100
+200
+D#5 100
+F2 200
+C4 200
+A4 200
+200
+D#5 100
+200
+D#5 100
+F2 200
+C4 200
+A4 200
+200
+D#5 100
+200
+D#5 100
+F2 200
+C4 200
+A4 200
+200
+D#5 100
+200
+A#2 200
+A#3 200
+F4 200
+D5 200
+400
+A#2 200
+A#3 200
+F4 200
+D5 200
+400
+A#2 200
+A#3 200
+F4 200
+D5 200
+400
+A#2 200
+A#3 200
+F4 200
+D5 200
+400
+G#5 100
+A#2 200
+D4 200
+F5 200
+200
+G#5 100
+200
+G#5 100
+A#2 200
+D4 200
+F5 200
+200
+G#5 100
+200
+G#5 100
+A#2 200
+D4 200
+F5 200
+200
+G#5 100
+200
+G#5 100
+A#2 200
+D4 200
+F5 200
+200
+G#5 100
+200
+G5 200
+D#3 800
+A#3 800
+D#5 800
+200
+D#6 200
+200
+D#6 200
+200
+A#5 200
+200
+A#5 200
+200
+G5 200
+200
+G5 200
+200
+D#5 200
+200
+D#5 400
+G3 800
+400
+G5 400
+400
+A#5 400
+D#3 800
+400
+C#6 400
+400
+C6 200
+G#2 800
+200
+F6 200
+200
+F6 200
+200
+C6 200
+200
+C6 200
+200
+A5 200
+200
+A5 200
+200
+F5 200
+200
+F5 400
+A3 800
+400
+A5 400
+400
+C6 400
+F3 800
+400
+D#6 400
+400
+D6 200
+A#2 800
+200
+G6 200
+200
+G6 200
+200
+D6 200
+200
+D6 200
+200
+B5 200
+200
+B5 200
+200
+G5 200
+200
+G5 400
+B3 800
+400
+B5 400
+400
+D6 400
+G3 800
+400
+F6 400
+400
+D#5 100
+C6 100
+D#6 100
+C4 200
+C3 800
+100
+C6 100
+D#6 100
+100
+D#5 100
+C6 100
+D#6 100
+100
+C6 100
+D#6 100
+100
+D#5 100
+C6 100
+D#6 100
+C4 200
+100
+C6 100
+D#6 100
+100
+D#5 100
+C6 100
+D#6 100
+100
+C6 100
+D#6 100
+100
+D#5 100
+C6 100
+D#6 100
+C4 200
+100
+C6 100
+D#6 100
+100
+D#5 100
+C6 100
+D#6 100
+100
+C6 100
+D#6 100
+100
+D#5 100
+C6 100
+D#6 100
+C4 200
+100
+C6 100
+D#6 100
+100
+D#5 100
+C6 100
+D#6 100
+100
+C6 100
+D#6 100
+100
+D5 100
+C6 100
+D6 100
+F4 200
+100
+C6 100
+D6 100
+100
+D5 100
+C6 100
+D6 100
+100
+C6 100
+D6 100
+100
+D5 100
+C6 100
+D6 100
+F4 200
+100
+C6 100
+D6 100
+100
+D5 100
+C6 100
+D6 100
+100
+C6 100
+D6 100
+100
+D5 100
+C6 100
+D6 100
+F4 200
+100
+C6 100
+D6 100
+100
+D5 100
+C6 100
+D6 100
+100
+C6 100
+D6 100
+100
+D5 100
+C6 100
+D6 100
+F4 200
+100
+C6 100
+D6 100
+100
+D5 100
+C6 100
+D6 100
+100
+C6 100
+D6 100
+100
+D5 100
+A#5 100
+D6 100
+G4 200
+100
+A#5 100
+D6 100
+100
+D5 100
+A#5 100
+D6 100
+100
+A#5 100
+D6 100
+100
+D5 100
+A#5 100
+D6 100
+G4 200
+100
+A#5 100
+D6 100
+100
+D5 100
+A#5 100
+D6 100
+100
+A#5 100
+D6 100
+100
+D5 100
+A#5 100
+D6 100
+G4 200
+100
+A#5 100
+D6 100
+100
+D5 100
+A#5 100
+D6 100
+100
+A#5 100
+D6 100
+100
+D5 100
+A#5 100
+D6 100
+G4 200
+100
+A#5 100
+D6 100
+100
+D5 100
+A#5 100
+D6 100
+100
+A#5 100
+D6 100
+100
+G5 100
+A#5 100
+G6 100
+G4 200
+100
+A#5 100
+G6 100
+100
+G5 100
+A#5 100
+G6 100
+100
+A#5 100
+G6 100
+100
+G5 100
+A#5 100
+G6 100
+G4 200
+100
+A#5 100
+G6 100
+100
+G5 100
+A#5 100
+G6 100
+100
+A#5 100
+G6 100
+100
+G5 100
+A#5 100
+G6 100
+G4 200
+100
+A#5 100
+G6 100
+100
+G5 100
+A#5 100
+G6 100
+100
+A#5 100
+G6 100
+100
+G5 100
+A#5 100
+G6 100
+G4 200
+100
+A#5 100
+G6 100
+100
+G5 100
+A#5 100
+G6 100
+100
+A#5 100
+G6 100
+100
+G5 100
+G#5 100
+G6 100
+C4 200
+100
+G#5 100
+G6 100
+100
+G5 100
+G#5 100
+G6 100
+100
+G#5 100
+G6 100
+100
+G5 100
+G#5 100
+G6 100
+C4 200
+100
+G#5 100
+G6 100
+100
+G5 100
+G#5 100
+G6 100
+100
+G#5 100
+G6 100
+100
+G5 100
+G#5 100
+G6 100
+C4 200
+100
+G#5 100
+G6 100
+100
+G5 100
+G#5 100
+G6 100
+100
+G#5 100
+G6 100
+100
+G5 100
+G#5 100
+G6 100
+C4 200
+100
+G#5 100
+G6 100
+100
+G5 100
+G#5 100
+G6 100
+100
+G#5 100
+G6 100
+100
+F5 100
+G#5 100
+F6 100
+D4 200
+100
+G#5 100
+F6 100
+100
+F5 100
+G#5 100
+F6 100
+100
+G#5 100
+F6 100
+100
+F5 100
+G#5 100
+F6 100
+D4 200
+100
+G#5 100
+F6 100
+100
+F5 100
+G#5 100
+F6 100
+100
+G#5 100
+F6 100
+100
+F5 100
+G#5 100
+F6 100
+D4 200
+100
+G#5 100
+F6 100
+100
+F5 100
+G#5 100
+F6 100
+100
+G#5 100
+F6 100
+100
+F5 100
+G#5 100
+F6 100
+D4 200
+100
+G#5 100
+F6 100
+100
+F5 100
+G#5 100
+F6 100
+100
+G#5 100
+F6 100
+100
+F5 100
+G5 100
+F6 100
+D#4 200
+100
+G5 100
+F6 100
+100
+F5 100
+G5 100
+F6 100
+100
+G5 100
+F6 100
+100
+F5 100
+G5 100
+F6 100
+D#4 200
+100
+G5 100
+F6 100
+100
+F5 100
+G5 100
+F6 100
+100
+G5 100
+F6 100
+100
+F5 100
+G5 100
+F6 100
+D#4 200
+100
+G5 100
+F6 100
+100
+F5 100
+G5 100
+F6 100
+100
+G5 100
+F6 100
+100
+F5 100
+G5 100
+F6 100
+D#4 200
+100
+G5 100
+F6 100
+100
+F5 100
+G5 100
+F6 100
+100
+G5 100
+F6 100
+100
+D#5 100
+C6 100
+D#6 100
+D#4 200
+100
+C6 100
+D#6 100
+100
+D#5 100
+C6 100
+D#6 100
+100
+C6 100
+D#6 100
+100
+D#5 100
+C6 100
+D#6 100
+D#4 200
+100
+C6 100
+D#6 100
+100
+D#5 100
+C6 100
+D#6 100
+100
+C6 100
+D#6 100
+100
+D#5 100
+C6 100
+D#6 100
+D#4 200
+100
+C6 100
+D#6 100
+100
+D#5 100
+C6 100
+D#6 100
+100
+C6 100
+D#6 100
+100
+D#5 100
+C6 100
+D#6 100
+D#4 200
+100
+C6 100
+D#6 100
+100
+D#5 100
+C6 100
+D#6 100
+100
+C6 100
+D#6 100
+100
+C#5 100
+C#6 100
+C6 100
+F4 200
+100
+C#6 100
+C6 100
+100
+C#5 100
+C#6 100
+C6 100
+100
+C#6 100
+C6 100
+100
+C#5 100
+C#6 100
+C6 100
+F4 200
+100
+C#6 100
+C6 100
+100
+C#5 100
+C#6 100
+C6 100
+100
+C#6 100
+C6 100
+100
+C#5 100
+A#5 100
+C#6 100
+G4 200
+100
+A#5 100
+C#6 100
+100
+C#5 100
+A#5 100
+C#6 100
+100
+A#5 100
+C#6 100
+100
+C#5 100
+A#5 100
+C#6 100
+G4 200
+100
+A#5 100
+C#6 100
+100
+C#5 100
+A#5 100
+C#6 100
+100
+A#5 100
+C#6 100
+100
+C5 100
+C6 100
+A#5 100
+G#4 200
+100
+C6 100
+A#5 100
+100
+C5 100
+C6 100
+A#5 100
+100
+C6 100
+A#5 100
+100
+C5 100
+C6 100
+A#5 100
+G#4 200
+100
+C6 100
+A#5 100
+100
+C5 100
+C6 100
+A#5 100
+100
+C6 100
+A#5 100
+100
+C5 100
+G#5 100
+C6 100
+G#4 200
+100
+G#5 100
+C6 100
+100
+C5 100
+G#5 100
+C6 100
+100
+G#5 100
+C6 100
+100
+C5 100
+G#5 100
+C6 100
+G#4 200
+100
+G#5 100
+C6 100
+100
+C5 100
+G#5 100
+C6 100
+100
+G#5 100
+C6 100
+100
+A#4 100
+A#5 100
+G#5 100
+D4 200
+100
+A#5 100
+G#5 100
+100
+A#4 100
+A#5 100
+G#5 100
+100
+A#5 100
+G#5 100
+100
+A#4 100
+A#5 100
+G#5 100
+D4 200
+100
+A#5 100
+G#5 100
+100
+A#4 100
+A#5 100
+G#5 100
+100
+A#5 100
+G#5 100
+100
+A#4 100
+G5 100
+A#5 100
+D#4 200
+100
+G5 100
+A#5 100
+100
+A#4 100
+G5 100
+A#5 100
+100
+G5 100
+A#5 100
+100
+A#4 100
+G5 100
+A#5 100
+D#4 200
+100
+G5 100
+A#5 100
+100
+A#4 100
+G5 100
+A#5 100
+100
+G5 100
+A#5 100
+100
+G#4 100
+G#5 100
+G5 100
+F4 200
+100
+G#5 100
+G5 100
+100
+G#4 100
+G#5 100
+G5 100
+100
+G#5 100
+G5 100
+100
+G#4 100
+G#5 100
+G5 100
+F4 200
+100
+G#5 100
+G5 100
+100
+G#4 100
+G#5 100
+G5 100
+100
+G#5 100
+G5 100
+100
+G#4 100
+F5 100
+G#5 100
+F4 200
+100
+F5 100
+G#5 100
+100
+G#4 100
+F5 100
+G#5 100
+100
+F5 100
+G#5 100
+100
+G#4 100
+F5 100
+G#5 100
+F4 200
+100
+F5 100
+G#5 100
+100
+G#4 100
+F5 100
+G#5 100
+100
+F5 100
+G#5 100
+100
+G4 100
+G5 100
+F5 100
+B3 200
+100
+G5 100
+F5 100
+100
+G4 100
+G5 100
+F5 100
+100
+G5 100
+F5 100
+100
+G4 100
+G5 100
+F5 100
+B3 200
+100
+G5 100
+F5 100
+100
+G4 100
+G5 100
+F5 100
+100
+G5 100
+F5 100
+100
+G5 100
+D#5 100
+C4 200
+100
+D#5 100
+G5 100
+100
+G5 100
+D#5 100
+100
+D#5 100
+G5 100
+100
+G5 100
+D#5 100
+C4 200
+100
+D#5 100
+G5 100
+100
+G5 100
+D#5 100
+100
+D#5 100
+G5 100
+100
+F5 100
+D#5 100
+C#4 200
+100
+F5 100
+D#5 100
+100
+F5 100
+D#5 100
+100
+F5 100
+D#5 100
+100
+F5 100
+D#5 100
+C#4 200
+100
+F5 100
+D#5 100
+100
+F5 100
+D#5 100
+100
+F5 100
+D#5 100
+100
+F5 100
+C#5 100
+C#4 200
+100
+C#5 100
+F5 100
+100
+F5 100
+C#5 100
+100
+C#5 100
+F5 100
+100
+F5 100
+C#5 100
+C#4 200
+100
+C#5 100
+F5 100
+100
+F5 100
+C#5 100
+100
+C#5 100
+F5 100
+100
+E5 100
+C5 100
+G5 100
+C4 200
+100
+E5 100
+C5 100
+100
+E5 100
+C5 100
+G5 100
+100
+E5 100
+C5 100
+100
+E5 100
+C5 100
+G5 100
+C4 200
+100
+E5 100
+C5 100
+100
+E5 100
+C5 100
+G5 100
+100
+E5 100
+C5 100
+100
+F5 100
+C5 100
+G#5 100
+C4 200
+100
+F5 100
+C5 100
+100
+F5 100
+C5 100
+G#5 100
+100
+F5 100
+C5 100
+100
+F5 100
+C5 100
+G#5 100
+C4 200
+100
+F5 100
+C5 100
+100
+F5 100
+C5 100
+G#5 100
+100
+F5 100
+C5 100
+100
+G5 100
+C5 100
+E5 100
+C4 200
+100
+G5 100
+C5 100
+100
+G5 100
+C5 100
+E5 100
+100
+G5 100
+C5 100
+100
+G5 100
+C5 100
+E5 100
+C4 200
+100
+G5 100
+C5 100
+100
+G5 100
+C5 100
+E5 100
+100
+G5 100
+C5 100
+100
+G#5 100
+C5 100
+F5 100
+C4 200
+100
+G#5 100
+C5 100
+100
+G#5 100
+C5 100
+F5 100
+100
+G#5 100
+C5 100
+100
+G#5 100
+C5 100
+F5 100
+C4 200
+100
+G#5 100
+C5 100
+100
+G#5 100
+C5 100
+F5 100
+100
+G#5 100
+C5 100
+100
+A#5 100
+C5 100
+G5 100
+C4 200
+100
+A#5 100
+C5 100
+100
+A#5 100
+C5 100
+G5 100
+100
+A#5 100
+C5 100
+100
+A#5 100
+C5 100
+G5 100
+C4 200
+100
+A#5 100
+C5 100
+100
+A#5 100
+C5 100
+G5 100
+100
+A#5 100
+C5 100
+100
+G#5 100
+C5 100
+F5 100
+C4 200
+100
+G#5 100
+C5 100
+100
+G#5 100
+C5 100
+F5 100
+100
+G#5 100
+C5 100
+100
+G#5 100
+C5 100
+F5 100
+C4 200
+100
+G#5 100
+C5 100
+100
+G#5 100
+C5 100
+F5 100
+100
+G#5 100
+C5 100
+100
+G5 100
+C5 100
+E5 100
+C4 200
+100
+G5 100
+C5 100
+100
+G5 100
+C5 100
+E5 100
+100
+G5 100
+C5 100
+100
+G5 100
+C5 100
+E5 100
+C4 200
+100
+G5 100
+C5 100
+100
+G5 100
+C5 100
+E5 100
+100
+G5 100
+C5 100
+100
+F5 100
+C5 100
+C6 100
+C4 200
+100
+F5 100
+C5 100
+100
+F5 100
+C5 100
+C6 100
+100
+F5 100
+C5 100
+100
+F5 100
+C5 100
+C6 100
+C4 200
+100
+F5 100
+C5 100
+100
+F5 100
+C5 100
+C6 100
+100
+F5 100
+C5 100
+100
+G5 100
+E5 100
+C4 800
+200
+E5 100
+G5 100
+100
+E5 100
+G5 100
+100
+E5 100
+G5 100
+100
+E5 100
+G5 100
+100
+E5 100
+G5 100
+100
+E5 100
+G5 100
+100
+E5 100
+G5 100
+200
+E5 100
+G5 100
+200
+E5 100
+G5 100
+200
+E5 100
+G5 100
+200
+F3 100
+C5 100
+F5 100
+G#5 100
+200
+F2 100
+G#4 100
+C5 100
+200
+F3 100
+C5 100
+F5 100
+G#5 100
+200
+F2 100
+G#4 100
+C5 100
+200
+F3 100
+C5 100
+F5 100
+G#5 100
+200
+F2 100
+G#4 100
+C5 100
+200
+F3 100
+C5 100
+F5 100
+G#5 100
+200
+F2 100
+G#4 100
+C5 100
+200
+C#5 100
+F5 100
+A#2 800
+G#4 800
+200
+C#5 100
+F5 100
+100
+C#5 100
+F5 100
+100
+C#5 100
+F5 100
+100
+C#5 100
+F5 100
+100
+C#5 100
+F5 100
+100
+C#5 100
+F5 100
+100
+C#5 100
+F5 100
+200
+C#5 100
+F5 100
+200
+C#5 100
+F5 100
+200
+C#5 100
+F5 100
+200
+D#3 100
+A#4 100
+D#5 100
+G5 100
+200
+D#2 100
+G4 100
+A#4 100
+C#5 100
+200
+D#3 100
+A#4 100
+D#5 100
+G5 100
+200
+D#2 100
+G4 100
+A#4 100
+C#5 100
+200
+D#3 100
+A#4 100
+G5 100
+D#5 100
+200
+D#2 100
+G4 100
+A#4 100
+C#5 100
+200
+D#3 100
+A#4 100
+G5 100
+D#5 100
+200
+D#2 100
+G4 100
+A#4 100
+C#5 100
+200
+C5 100
+D#5 100
+G#2 800
+G4 800
+200
+C5 100
+D#5 100
+100
+C5 100
+D#5 100
+100
+C5 100
+D#5 100
+100
+C5 100
+D#5 100
+100
+C5 100
+D#5 100
+100
+C5 100
+D#5 100
+100
+C5 100
+D#5 100
+200
+C5 100
+D#5 100
+200
+C5 100
+D#5 100
+200
+C5 100
+D#5 100
+200
+C#3 100
+G#4 100
+C#5 100
+F5 100
+200
+C#2 100
+F4 100
+G#4 100
+C5 100
+200
+C#3 100
+G#4 100
+C#5 100
+F5 100
+200
+C#2 100
+F4 100
+G#4 100
+C5 100
+200
+C#3 100
+G#4 100
+C#5 100
+F5 100
+200
+C#2 100
+F4 100
+G#4 100
+C5 100
+200
+C#3 100
+G#4 100
+C#5 100
+F5 100
+200
+C#2 100
+F4 100
+G#4 100
+C5 100
+200
+A#4 100
+C#5 100
+G2 800
+F4 800
+200
+A#4 100
+C#5 100
+100
+A#4 100
+C#5 100
+100
+A#4 100
+C#5 100
+100
+A#4 100
+C#5 100
+100
+A#4 100
+C#5 100
+100
+A#4 100
+C#5 100
+100
+A#4 100
+C#5 100
+200
+A#4 100
+C#5 100
+200
+A#4 100
+C#5 100
+200
+A#4 100
+C#5 100
+200
+C4 100
+G4 100
+C5 100
+E5 100
+100
+E5 100
+G5 100
+100
+C3 100
+E4 100
+G5 100
+A#5 100
+100
+E5 100
+G5 100
+100
+C4 100
+G4 100
+C5 100
+E5 100
+100
+E5 100
+G5 100
+100
+C3 100
+E4 100
+G5 100
+A#5 100
+100
+E5 100
+G5 100
+100
+C4 100
+G4 100
+C5 100
+E5 100
+100
+E5 100
+G5 100
+100
+C3 100
+E4 100
+G5 100
+A#5 100
+100
+E5 100
+G5 100
+100
+C4 100
+G4 100
+C5 100
+E5 100
+100
+E5 100
+G5 100
+100
+C3 100
+E4 100
+G5 100
+A#5 100
+100
+E5 100
+G5 100
+100
+F3 100
+C4 100
+F5 100
+G#5 100
+200
+F3 100
+C4 100
+F5 100
+G#5 100
+100
+F3 100
+C4 100
+F5 100
+G#5 100
+100
+F3 100
+C4 100
+F5 100
+G#5 100
+100
+F3 100
+C4 100
+F5 100
+G#5 100
+100
+F3 100
+C4 100
+F5 100
+G#5 100
+100
+F3 100
+C4 100
+F5 100
+G#5 100
+100
+F3 100
+C4 100
+F5 100
+G#5 100
+200
+F3 100
+C4 100
+F5 100
+G#5 100
+200
+F3 100
+C4 100
+F5 100
+G#5 100
+200
+F3 100
+C4 100
+F5 100
+G#5 100
+200
+A#2 100
+C#4 100
+F5 100
+G5 100
+200
+A#2 100
+C#4 100
+F5 100
+G5 100
+100
+A#2 100
+C#4 100
+F5 100
+G5 100
+100
+A#2 100
+C#4 100
+F5 100
+G5 100
+100
+A#2 100
+C#4 100
+F5 100
+G5 100
+100
+A#2 100
+C#4 100
+F5 100
+G5 100
+100
+A#2 100
+C#4 100
+F5 100
+G5 100
+100
+A#2 100
+C#4 100
+F5 100
+G5 100
+200
+A#2 100
+C#4 100
+F5 100
+G5 100
+200
+A#2 100
+C#4 100
+F5 100
+G5 100
+200
+A#2 100
+C#4 100
+F5 100
+G5 100
+200
+C3 100
+C4 100
+E5 100
+G5 100
+200
+C3 100
+C4 100
+E5 100
+G5 100
+100
+C3 100
+C4 100
+E5 100
+G5 100
+100
+C3 100
+C4 100
+E5 100
+G5 100
+100
+C3 100
+C4 100
+E5 100
+G5 100
+100
+C3 100
+C4 100
+E5 100
+G5 100
+100
+C3 100
+C4 100
+E5 100
+G5 100
+100
+C3 100
+C4 100
+E5 100
+G5 100
+200
+C3 100
+C4 100
+E5 100
+G5 100
+200
+C3 100
+C4 100
+E5 100
+G5 100
+200
+C3 100
+C4 100
+E5 100
+G5 100
+200
+F2 100
+G#3 100
+F5 100
+200
+F3 100
+C4 100
+F4 100
+G#4 100
+100
+F3 100
+C4 100
+F4 100
+G#4 100
+100
+F3 100
+C4 100
+F4 100
+G#4 100
+100
+F3 100
+C4 100
+F4 100
+G#4 100
+100
+F3 100
+C4 100
+F4 100
+G#4 100
+100
+F3 100
+C4 100
+F4 100
+G#4 100
+100
+F3 100
+C4 100
+F4 100
+G#4 100
+200
+F3 100
+C4 100
+F4 100
+G#4 100
+200
+F3 100
+C4 100
+F4 100
+G#4 100
+200
+F3 100
+C4 100
+F4 100
+G#4 100
+200
+A#2 100
+C#4 100
+F4 100
+G4 100
+200
+A#2 100
+C#4 100
+F4 100
+G4 100
+100
+A#2 100
+C#4 100
+F4 100
+G4 100
+100
+A#2 100
+C#4 100
+F4 100
+G4 100
+100
+A#2 100
+C#4 100
+F4 100
+G4 100
+100
+A#2 100
+C#4 100
+F4 100
+G4 100
+100
+A#2 100
+C#4 100
+F4 100
+G4 100
+100
+A#2 100
+C#4 100
+F4 100
+G4 100
+200
+A#2 100
+C#4 100
+F4 100
+G4 100
+200
+A#2 100
+C#4 100
+F4 100
+G4 100
+200
+A#2 100
+C#4 100
+F4 100
+G4 100
+200
+C3 100
+C4 100
+E4 100
+G4 100
+200
+C3 100
+C4 100
+E4 100
+G4 100
+100
+C3 100
+C4 100
+E4 100
+G4 100
+100
+C3 100
+C4 100
+E4 100
+G4 100
+100
+C3 125
+C4 125
+E4 125
+G4 125
+125
+C3 150
+C4 150
+E4 150
+G4 150
+150
+C3 175
+C4 175
+E4 175
+G4 175
+175
+C3 200
+C4 200
+E4 200
+G4 200
+425
+C4 250
+E4 250
+G4 250
+25
+C3 250
+500
+C3 300
+C4 300
+E4 300
+G4 300
+625
+C3 350
+C4 350
+E4 350
+G4 350
+775
+F2 3000
+G#3 3100
+F4 3100
+/krnl/kernel.js
+365
+const screen = document.getElementById("screen");
+const startTime = Date.now();
+let active = ["/krnl/kernel.js"];
+let saveTimeout = null;
+let saveLock = false;
+let savePending = false;
+function scrollToBottom() {
+    requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+            window.scrollTo(0, document.documentElement.scrollHeight);
+        });
+    });
+}
+async function kernelPanic(reason) {
+    clear();
+    const styleEl = document.createElement("style");
+    styleEl.innerHTML = `body, #screen { font-family: ClassicConsole, monospace !important; }`;
+    document.head.appendChild(styleEl);
+    const time = new Date().toISOString();
+    write(`Kernel panic -- ${reason}\n`)
+    write("CPU: Unknown\n");
+    write("Memory: 500MB\n");
+    write("Press CTRL and R to restart\n");
+    write(`Detected OS version: ${window.version || "Unknown"}\n`);
+    write(`Time: ${time}\n`);
+    return;
+}
 function log(header, text, save = false) {
-    const logPath = "/var/syslog.log";
-
+    const logPath = "/var/syslog.log"
     if (!fs.folders.includes("/var")) {
         fs.folders.push("/var");
     }
-
     if (!fs.files.hasOwnProperty(logPath)) {
         fs.files[logPath] = "";
     }
-
     const lines = text.split("\n");
     const entry = lines.map(line => `${header}: ${line}`).join("\n") + "\n";
-
     fs.files[logPath] += entry;
-    if (save) console.log("hi");
 }
-
 function clear() {
     screen.innerHTML = "";
 }
-
 function newline() {
     screen.appendChild(document.createElement("br"));
 }
-
 function wait(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
 }
-
 function formatTime(ms) {
     const totalSeconds = Math.floor(ms / 1000);
     const hours = String(Math.floor(totalSeconds / 3600)).padStart(2, '0');
@@ -1178,8 +7471,8 @@ async function runFile(path) {
     const code = fs.files[path];
     if (!code) {
         log("kernel", "FILE NOT FOUND", true);
-        write("KERNEL: File not found: " + path + "\n");
-        return;
+        write("kernel: File not found: " + path + "\n");
+        return true;
     }
 
     try {
@@ -1191,144 +7484,206 @@ async function runFile(path) {
         if (index !== -1) {
             active.splice(index, 1);
         }
+        return false
     } catch (e) {
         log("kernel", "Error: " + e.message, true);
-        write("KERNEL Error: " + e.message + "\n");
+        write("kernel: " + e.message + "\n");
         window.shell.lastStatus = 1;
+        return true
     }
 }
 
-async function applyFontFromFile() {
-    if (!window.shell.font) return;
-    const path = window.shell.font.replace(/\/+/g, "/");
-    if (!fs.files.hasOwnProperty(path)) {
-        log("kernel", "CRITICAL ERROR", true);
-        write("KERNEL Error: Font file not found!\n");
-        throw new Error("Font file not found!");
-    }
-
-    const fontContent = fs.files[path].trim();
-    const styleEl = document.createElement("style");
-    styleEl.innerHTML = `body, #screen { font-family: ${fontContent} !important; }`;
-    document.head.appendChild(styleEl);
-}
-
-function startFSSync() {
-    setInterval(async () => {
-        if (!fs1FileHandle) return;
-        try {
-            const file = await fs1FileHandle.getFile();
-            const fs1Content = await file.text();
-            const newFS = parseFS1(fs1Content);
-
-            fs.folders.length = 0;
-            fs.folders.push(...newFS.folders);
-            for (const k in fs.files) delete fs.files[k];
-            for (const k in newFS.files) fs.files[k] = newFS.files[k];
-            for (const k in fs.meta) delete fs.meta[k];
-            for (const k in newFS.meta) fs.meta[k] = newFS.meta[k];
-        } catch (e) {
-            log("kernel", "FS1 SYNC FAILED", true);
-            write("[FS1 sync failed: " + e.message + "]\n");
-        }
-    }, 5000);
-}
 
 async function requestSuperuserPassword(callback) {
     window.shell.inputMode = "password";
-    write("[sudo] password: ", "yellow");
+
+    const textColor = window.shell.theme?.[0] || "white";
+    const bgColor = window.shell.theme?.[1] || "black";
+    const fontSize = window.shell.theme?.[3] || "14px";
+    const fontFamily = getComputedStyle(document.body).fontFamily;
+    const promptSpan = document.createElement("span");
+    promptSpan.textContent = `[sudo] password for ${window.shell.userName}: `;
+    promptSpan.style.color = textColor;
+    promptSpan.style.backgroundColor = bgColor;
+    promptSpan.style.fontSize = fontSize;
+    promptSpan.style.fontFamily = fontFamily;
+
+    screen.appendChild(promptSpan);
 
     let buffer = "";
-    const inputSpan = document.createElement("span");
-    screen.appendChild(inputSpan);
 
     const handler = async e => {
         if (e.key === "Backspace") {
             if (buffer.length > 0) {
                 buffer = buffer.slice(0, -1);
-                inputSpan.lastChild?.remove();
             }
             e.preventDefault();
             return;
         }
+
         if (e.key === "Enter") {
             newline();
             document.removeEventListener("keydown", handler);
-            await callback(buffer);
+            callback(buffer);
             window.shell.inputMode = "command";
             return;
         }
+
         if (e.key.length === 1) {
             buffer += e.key;
-            inputSpan.appendChild(document.createTextNode("*"));
         }
     };
+
     document.addEventListener("keydown", handler);
 }
 
-async function isSetupComplete() {
-    const confPath = "/etc/uas/setup.conf";
 
-    if (!fs.files[confPath]) return false;
-
-    const content = fs.files[confPath].trim();
-
-    return content.includes("setup=1");
+async function powerwashAndRestore(raw) {
+    const fsObj = window.fs;
+    fsObj.folders.length = 0;
+    fsObj.files = {};
+    fsObj.meta = {};
+    const newFS = parseFS1(raw);
+    fsObj.folders.push(...newFS.folders);
+    fsObj.files = newFS.files;
+    fsObj.meta = newFS.meta;
+    await saveFS1();
 }
-
-async function boot() {
-    clear();
-    log("Boot", "Starting boot process");
-
-    fs = window.fs;
-    fs1FileHandle = window.fs1FileHandle;
-
-    for (const path in fs.files)
-        if (path.startsWith("/tmp/") && path != "/tmp/") delete fs.files[path];
-
-    if (fs.files["/etc/config.js"]) {
-        log("Boot", "Running config.js");
-        await runFile("/etc/config.js");
-    }
-
-    await applyFontFromFile();
-    await runFile("/krnl/sound/sap.js");
-    document.body.style.backgroundColor = window.shell.theme?.[2] || "black";
-    log("Boot", "Running /boot/boot.js", true);
-    const setupDone = await isSetupComplete();
-    if (!setupDone) {
-        await runFile("/bin/bash.js");
-        await runFile("/etc/uas/uas.js");
-    } else {
-        await runFile("/boot/boot.js");
+clear();
+if (window.fs.files["/etc/default/lake"]) {
+    if (window.fs.files["/etc/default/lake"].trim().split("=")[1] == "false") {
+        write("Browser Linux (c) 2026");
+        window.writebackup = write;
+        write = (t,c,b,s) => {};
     }
 }
-
+write("[    0.25326] hash validated [0x00000000]\n", "gray");
+await wait(50);
 window.write = write;
+write("[    0.25326] write validated [0x00000000]\n", "gray");
+await wait(50);
+write("[    0.25326] hash validated [0x00000000]\n", "gray");
 window.clear = clear;
+write("[    0.25326] clear validated [0x00000000]\n", "gray");
+await wait(25);
+write("[    0.25326] hash validated [0x00000000]\n", "gray");
+await wait(50);
 window.newline = newline;
+write("[    0.25326] newline validated [0x00000000]\n", "gray");
+await wait(100);
+write("[    0.25326] hash validated [0x00000000]\n", "gray");
+await wait(100);
 window.fs = fs;
+write("[    0.25326] fs validated [0x00000000]\n", "gray");
+await wait(25);
+write("[    0.25326] hash validated [0x00000000]\n", "gray");
 window.runFile = runFile;
+write("[    0.25326] runFile validated [0x00000000]\n", "gray");
+await wait(50);
+write("[    0.25326] hash validated [0x00000000]\n", "gray");
 window.wait = wait;
+write("[    0.25326] wait validated [0x00000000]\n", "gray");
+await wait(25);
+write("[    0.25326] hash validated [0x00000000]\n", "gray");
 window.saveFS1 = saveFS1;
-window.boot = boot;
+write("[    0.25326] saveFS1 validated [0x00000000]\n", "gray");
+await wait(100);
+write("[    0.25326] hash validated [0x00000000]\n", "gray");
 window.log = log;
+write("[    0.25326] log validated [0x00000000]\n", "gray");
+await wait(50);
+write("[    0.25326] hash validated [0x00000000]\n", "gray");
+await wait(50);
 window.requestSuperuserPassword = requestSuperuserPassword;
+write("[    0.25326] password validated [0x00000000]\n", "gray");
+write("[    0.25326] hash validated [0x00000000]\n", "gray");
+await wait(25);
+window.kernelPanic = kernelPanic;
+write("[    0.25326] kernelPanic validated [0x00000000]\n", "gray");
+await wait(100);
+write("[    0.25326] hash validated [0x00000000]\n", "gray");
+await wait(50);
+window.scrollToBottom = scrollToBottom;
+write("[    0.25326] scroll validated [0x00000000]\n", "gray");
+write("[    0.25326] hash validated [0x00000000]\n", "gray");
+await wait(50);
 window.active = active;
+write("[    0.25326] active validated [0x00000000]\n", "gray");
+await wait(25);
+write("[    0.25326] hash validated [0x00000000]\n", "gray");
 window.shell = {};
+write("[    0.25326] shell validated [0x00000000]\n", "gray");
+await wait(25);
+write("[    0.25326] hash validated [0x00000000]\n", "gray");
+await wait(100);
 
 setInterval(() => {
     const elapsed = Date.now() - startTime;
     window.uptime = formatTime(elapsed);
 }, 1000);
-
-boot();
+write("[    0.25326] hash validated [0x00000000]\n", "gray");
+await wait(50);
+write("*************************************\n", "gray");
+write("* 0.25326              0x00000000   *\n", "gray");
+write("*************************************\n", "gray");
+newline();
+newline();
+await wait(25);
+write("*************************************\n", "gray");
+write("* 0.25326              0x00000000   *\n", "gray");
+write("*************************************\n", "gray");
+newline();
+newline();
+await wait(25);
+write("*************************************\n", "gray");
+write("* 0.25326              0x00000000   *\n", "gray");
+write("*************************************\n", "gray");
+newline();
+newline();
+await wait(25);
+write("*************************************\n", "gray");
+write("* 0.25326              0x00000000   *\n", "gray");
+write("*************************************\n", "gray");
+newline();
+newline();
+await wait(25);
+write("*************************************\n", "gray");
+write("* 0.25326              0x00000000   *\n", "gray");
+write("*************************************\n", "gray");
+newline();
+newline();
+await wait(25);
+write("*************************************\n", "gray");
+write("* 0.25326              0x00000000   *\n", "gray");
+write("*************************************\n", "gray");
+newline();
+newline();
+await wait(25);
+write("*************************************\n", "gray");
+write("* 0.25326              0x00000000   *\n", "gray");
+write("*************************************\n", "gray");
+newline();
+newline();
+await wait(25);
+write("*************************************\n", "gray");
+write("* 0.25326              0x00000000   *\n", "gray");
+write("*************************************\n", "gray");
+newline();
+newline();
+await wait(25);
+write("[*] Buffer output=none\n", "gray");
+write("[*] systemd=queue\n", "gray");
+write("[*] Active dump\n", "gray");
+runFile("/etc/systemd/system/init.js");
+write("[*] systemd=active\n", "gray");
+write("[    0.25326] hash validated [0x00000000]\n", "gray");
 /krnl/WARNING
 1
 Editing "kernel.js" will brick your system!
 /krnl/sound/sap.js
-33
+112
 const ctx = new (window.AudioContext || window.webkitAudioContext)();
+let freq = 440
 function noteToFreq(note) {
   const notes = {
     C:0, "C#":1, D:2, "D#":3, E:4,
@@ -1342,10 +7697,77 @@ function noteToFreq(note) {
   const [, pitch, octave] = match;
   const midi = notes[pitch] + (parseInt(octave) + 1) * 12;
 
-  return 440 * Math.pow(2, (midi - 69) / 12);
+  return freq * Math.pow(2, (midi - 69) / 12);
 }
+async function playSong(cmdLine, sh4u=false) {
+    let path;
+
+let base = cmdLine.startsWith("/") ? cmdLine : (shell.cwd === "/" ? "" : shell.cwd) + "/" + cmdLine;
+path = "/" + base.split("/").filter(Boolean).reduce((a, p) => p === ".." ? (a.pop(), a) : p === "." ? a : (a.push(p), a), []).join("/");
+
+    const file = window.fs.files[path];
+    if (!file) return false;
+
+    const lines = file.split("\n")
+
+    let mode
+    const isNumber = (s) => /^-?\d+$/.test(s.trim());
+    let index = 0
+    window.sap.playing = true;
+    let prev = window.shell.inputMode;
+    window.shell.inputMode = "sap";
+    if (sh4u) document.addEventListener("keydown", handleKeydown);
+    if (sh4u) screen.innerHTML = "";
+    freq = lines[0];
+    lines.shift();
+    for (const line of lines) {
+        mode = "note";
+        if (isNumber(line)) mode = "wait";
+        if (mode == "wait") {
+          if (sh4u) write(index + " | " + line + "ms\n", "white", window.shell.theme[2], true);
+          await wait(Number(line));
+          index++;
+          continue;
+        }
+        window.sap.play(line.split(" ")[0], Number(line.split(" ")[1]));
+        if (sh4u) {
+            screen.innerHTML = "";
+
+            const parts = line.split(" ");
+            const note = parts[0];
+            const length = Number(parts[1]);
+
+            write(index + " | " + note + " | Length: " + length + "ms\n", "white", "purple", true);
+
+            for (let i = index + 1; i < index + 26 && i < lines.length; i++) {
+                const next = lines[i];
+
+                if (isNumber(next)) {
+                    write(i + " | " + next + "ms\n", "gray", window.shell.theme[2], true);
+                } else {
+                    const p = next.split(" ");
+                    const n = p[0];
+                    const l = Number(p[1]);
+
+                    write(i + " | " + n + " | Length: " + l + "ms\n", "gray", window.shell.theme[2], true);
+                }
+            }
+        }
+        if (window.sap.stop) {
+          break;
+        }
+        index++;
+    }
+    window.shell.inputMode = prev;
+    window.sap.playing = false;
+    if (sh4u) screen.innerHTML = "";
+    if (sh4u) prompt();
+    window.sap.stop = false;
+    return true;
+}
+
 window.sap = {
-  play(note) {
+  play(note, duration = 300) {
     const osc = ctx.createOscillator();
     const gain = ctx.createGain();
 
@@ -1358,18 +7780,32 @@ window.sap = {
     gain.connect(ctx.destination);
 
     osc.start();
-    osc.stop(ctx.currentTime + 0.3);
+    osc.stop(ctx.currentTime + duration / 1000);
   }
 };
+
+function handleKeydown(e) {
+    if (e.ctrlKey && e.key.toLowerCase() === "c") {
+        window.sap.stop = true;
+        document.removeEventListener("keydown", handleKeydown);
+    }
+}
+
+window.sap.playsap = playSong
+window.sap.playing = false;
+window.sap.stop = false;
 /root/bin/flash.js
-24
+28
 if (shell.userPermission != 4) {
     write("flash: No superuser detected\n");
     return;
 }
 
 async function unlock() {
-
+    if (fs.files["/etc/.write-protect"]) {
+        write("flash: wp is enabled\n");
+        return 1;
+    }
     if (!fs.folders.includes("/firm")) {
         fs.folders.push("/firm");
     }
@@ -1381,10 +7817,11 @@ async function unlock() {
     if (!fs.meta["/firm"].hasOwnProperty(".firmware-unlock")) {
         fs.meta["/firm"][".firmware-unlock"] = "*";
     }
+    fs.meta["/firm"]["writepermission"] = 4;
+    fs.meta["/firm"]["readpermission"] = 4;
 
     write("flash: firmware unlocked\n");
 }
-
 await unlock();
 saveFS1();
 /root/bin/reboot.js
@@ -1399,6 +7836,29 @@ log("REBOOT", "Rebooting system at uptime " + window.uptime + " " + Date.now().t
 saveFS1();
 await wait(1000);
 location.reload();
+/usr/bin/alias.js
+21
+const userinput = shell.args.join(" ")
+if (!userinput) {
+    write("Interactive mode is not available\n");
+    return 1;
+}
+const alias = userinput.split("=")[0];
+const string = userinput.split("=")[1];
+if (!alias || !string) {
+    write("Invalid input\n");
+    return 1;
+}
+let pattern = string
+
+if (
+  (pattern.startsWith('"') && pattern.endsWith('"')) ||
+  (pattern.startsWith("'") && pattern.endsWith("'"))
+) {
+  pattern = pattern.slice(1, -1);
+}
+
+window.shell.aliases[alias] = pattern;
 /usr/bin/bc.js
 32
 let input = "";
@@ -1434,7 +7894,7 @@ write(result + "\n", "white");
 
 return 0;
 /usr/bin/cat.js
-64
+60
 const filename = shell.args[0];
 
 if (!filename) {
@@ -1443,12 +7903,8 @@ if (!filename) {
 }
 
 let path;
-if (filename.startsWith("/")) {
-    path = filename.replace(/\/+/g, "/");
-} else {
-    path = (shell.cwd === "/" ? "/" : shell.cwd + "/") + filename;
-    path = path.replace(/\/+/g, "/");
-}
+let base = filename.startsWith("/") ? filename : (shell.cwd === "/" ? "" : shell.cwd) + "/" + filename;
+path = "/" + base.split("/").filter(Boolean).reduce((a, p) => p === ".." ? (a.pop(), a) : p === "." ? a : (a.push(p), a), []).join("/");
 
 function getParentFolder(path) {
     const parts = path.split("/");
@@ -1500,7 +7956,7 @@ if (fs.files.hasOwnProperty(path)) {
     return 1
 }
 /usr/bin/cd.js
-60
+44
 if (shell.args.length === 0 || shell.args[0] == "~") {
     shell.cwd = "/home";
     return;
@@ -1509,24 +7965,8 @@ if (shell.args.length === 0 || shell.args[0] == "~") {
 let target = shell.args[0];
 let newPath;
 
-if (target === "..") {
-    if (shell.cwd === "/") {
-        return;
-    }
-    const parts = shell.cwd.split("/");
-    parts.pop(); 
-
-    newPath = parts.length === 1 ? "/" : parts.join("/");
-} else if (target === "/") {
-    newPath = "/";
-} else if (target.startsWith("/")) {
-    newPath = target.replace(/\/+/g, "/"); 
-
-} else {
-    newPath = (shell.cwd === "/" ? "/" : shell.cwd + "/") + target; 
-
-    newPath = newPath.replace(/\/+/g, "/");
-}
+let base = target.startsWith("/") ? target : (shell.cwd === "/" ? "" : shell.cwd) + "/" + target;
+newPath = "/" + base.split("/").filter(Boolean).reduce((a, p) => p === ".." ? (a.pop(), a) : p === "." ? a : (a.push(p), a), []).join("/");
 
 function folderExists(path) {
     return path === "/" || fs.folders.includes(path);
@@ -1562,7 +8002,7 @@ if (folderExists(newPath)) {
     return 1;
 }
 /usr/bin/chmod.js
-63
+59
 if (!shell.args || shell.args.length < 3) {
     write("chmod: missing operand\n");
     return 1;
@@ -1581,12 +8021,8 @@ if (
 }
 
 let path;
-if (target.startsWith("/")) {
-    path = target.replace(/\/+/g, "/");
-} else {
-    path = (shell.cwd === "/" ? "/" : shell.cwd + "/") + target;
-    path = path.replace(/\/+/g, "/");
-}
+let base = target.startsWith("/") ? target : (shell.cwd === "/" ? "" : shell.cwd) + "/" + target;
+path = "/" + base.split("/").filter(Boolean).reduce((a, p) => p === ".." ? (a.pop(), a) : p === "." ? a : (a.push(p), a), []).join("/");
 
 const exists = fs.folders.includes(path) || fs.files.hasOwnProperty(path);
 if (!exists) {
@@ -1675,10 +8111,10 @@ function canWrite(path) {
     return shell.userPermission >= getEffectiveWritePermission(path) || shell.userPermission === 4;
 }
 
-function normalizePath(p) {
-    if (p.startsWith("/")) return p.replace(/\/+/g, "/");
-    let result = (shell.cwd === "/" ? "/" : shell.cwd + "/") + p;
-    return result.replace(/\/+/g, "/");
+function normalizePath(target) {
+    let base = target.startsWith("/") ? target : (shell.cwd === "/" ? "" : shell.cwd) + "/" + target;
+    result = "/" + base.split("/").filter(Boolean).reduce((a, p) => p === ".." ? (a.pop(), a) : p === "." ? a : (a.push(p), a), []).join("/");
+    return result;
 }
 
 const path = normalizePath(source);
@@ -1782,6 +8218,82 @@ else if (fs.folders.includes(path)) {
 
     saveFS1();
 }
+/usr/bin/curl.js
+74
+let options = [];
+let values = {};
+
+function detectargs() {
+    let newArgs = [];
+
+    for (let i = 0; i < shell.args.length; i++) {
+        let item = shell.args[i];
+
+        if (item.startsWith("-") && item.length > 1) {
+            let key = item.slice(1);
+            let next = shell.args[i + 1];
+
+            if (next && !next.startsWith("-")) {
+                values[key] = next;
+                newArgs.push(next);
+
+                i++;
+            } else {
+                values[key] = true;
+            }
+            options.push(...key.split(""));
+        } else {
+            newArgs.push(item);
+        }
+    }
+    shell.args = newArgs;
+}
+detectargs();
+
+const url = shell.args[0];
+
+const followRedirects = options.includes("L");
+const failSilently = options.includes("f");
+const saveToFile = options.includes("O");
+
+if (!url) {
+  write("curl: missing operand");
+  return 1;
+} else {
+  let finalUrl = url;
+
+  if (!/^https?:\/\//i.test(finalUrl)) {
+    finalUrl = "https://" + finalUrl;
+  }
+
+  await fetch(finalUrl)
+    .then(async res => {
+      if (!res.ok) {
+        if (failSilently) return null;
+        write(`curl: (${res.status}) ${res.statusText}`);
+        return null;
+      }
+
+      const data = await res.text();
+      if (saveToFile) {
+        let filename = finalUrl.split("/").pop() || "index.html";
+        filename = filename.split("?")[0];
+
+        const path = window.shell.cwd.endsWith("/")
+          ? window.shell.cwd + filename
+          : window.shell.cwd + "/" + filename;
+
+        window.fs.files[path] = data;
+      }
+      if (!saveToFile) await write(data);
+      return null;
+    })
+    .catch(() => {
+      if (!failSilently) {
+        write("curl: failed to fetch");
+      }
+    });
+}
 /usr/bin/date.js
 1
 write(new Date().toISOString().split('T')[0] + " " + new Date().toLocaleTimeString('en-GB') + "\n");
@@ -1789,12 +8301,64 @@ write(new Date().toISOString().split('T')[0] + " " + new Date().toLocaleTimeStri
 1
 write("Unknown signal 31\n");
 /usr/bin/echo.js
-2
-write(shell.args.join(" ") + "\n");
+40
+let options = [];
+let values = {};
+
+function detectargs() {
+    let newArgs = [];
+
+    for (let i = 0; i < shell.args.length; i++) {
+        let item = shell.args[i];
+
+        if (item.startsWith("-") && item.length > 1) {
+            let key = item.slice(1);
+            let next = shell.args[i + 1];
+
+            if (next && !next.startsWith("-")) {
+                values[key] = next;
+                newArgs.push(next);
+
+                i++;
+            } else {
+                values[key] = true;
+            }
+            options.push(...key.split(""));
+        } else {
+            newArgs.push(item);
+        }
+    }
+    shell.args = newArgs;
+}
+detectargs();
+
+let msg = shell.args.join(" ");
+
+if (
+  (msg.startsWith('"') && msg.endsWith('"')) ||
+  (msg.startsWith("'") && msg.endsWith("'"))
+) {
+  msg = msg.slice(1, -1);
+}
+write(msg + "\n");
 return 0;
 /usr/bin/env.js
 1
-executeCommand("cat /tmp/var.conf");
+await executeCommand("cat /etc/var.conf");
+/usr/bin/force.js
+12
+let mode = shell.args[0]
+let setting = shell.args[1]
+if (mode.toLowerCase() == "reload") {
+    if (setting.toLowerCase() == "dump") {
+        runFile("/etc/dump.js");
+        return 0;
+    }
+    if (setting.toLowerCase() == "config") {
+        runFile("/etc/config.js");
+        return 0;
+    }
+}
 /usr/bin/fsck.js
 59
 if (shell.userPermission < 4) {
@@ -1856,6 +8420,156 @@ log("FSCK", "Finished", true);
 write("fsck: finished\n");
 
 if (typeof saveFS1 === "function") await saveFS1();
+/usr/bin/ggp.js
+64
+if (shell.userPermission != 4) {
+    write("ggp: no root detected\n");
+    return;
+}
+
+const pkgname = shell.args[0];
+const mode = shell.args[1] || "none";
+if (!pkgname) {
+    write("ggp: invalid package name\n");
+    return;
+}
+if (mode == "none" || mode != "local") {
+    const url = `https://raw.githubusercontent.com/VRDog28/BrowserLinux/main/packages/${pkgname}`;
+    let data = ""
+    write("Fetching package from github...\n");
+    try {
+        const res = await fetch(url);
+        if (res.ok) {
+            data = await res.text();
+        } else {
+            write(`ggp: package "${pkgname}" not found\n`);
+        }
+    } catch (err) {
+        write("ggp: network error\n");
+    }
+
+    if (!data) {
+        return;
+    }
+} else {
+    let base = pkgname.startsWith("/") ? pkgname : (shell.cwd === "/" ? "" : shell.cwd) + "/" + pkgname;
+    path = "/" + base.split("/").filter(Boolean).reduce((a, p) => p === ".." ? (a.pop(), a) : p === "." ? a : (a.push(p), a), []).join("/");
+    if (!window.fs.files[path]) {
+        write("ggp: local package not found\n");
+        return;
+    }
+    data = window.fs.files[path];
+}
+write("Parsing package...\n");
+const parsedpkg = parseFS1(data);
+if (!parsedpkg || typeof parsedpkg !== "object") {
+    write("ggp: invalid package format\n");
+    return;
+}
+
+if (parsedpkg.folders && parsedpkg.folders.length > 0) {
+    for (const folder of parsedpkg.folders) {
+        if (fs.folders.includes(folder)) continue;
+        fs.folders.push(folder);
+    }
+}
+if (parsedpkg.files && typeof parsedpkg.files === "object") {
+    for (const file in parsedpkg.files) {
+        if (file in fs.files) continue;
+        fs.files[file] = parsedpkg.files[file];
+    }
+}
+if (parsedpkg.meta && typeof parsedpkg.meta === "object") {
+    for (const meta in parsedpkg.meta) {
+        if (meta in fs.meta) continue;
+        fs.meta[meta] = parsedpkg.meta[meta];
+    }
+}
+await saveFS1();
+/usr/bin/grep.js
+82
+let options = [];
+let values = {};
+
+function detectargs() {
+    let newArgs = [];
+
+    for (let i = 0; i < shell.args.length; i++) {
+        let item = shell.args[i];
+
+        if (item.startsWith("-") && item.length > 1) {
+            let key = item.slice(1);
+            let next = shell.args[i + 1];
+
+            if (next && !next.startsWith("-")) {
+                values[key] = next;
+                newArgs.push(next);
+
+                i++;
+            } else {
+                values[key] = true;
+            }
+            options.push(...key.split(""));
+        } else {
+            newArgs.push(item);
+        }
+    }
+    shell.args = newArgs;
+}
+detectargs();
+
+let pattern = shell.args.join(" ");
+
+if (
+  (pattern.startsWith('"') && pattern.endsWith('"')) ||
+  (pattern.startsWith("'") && pattern.endsWith("'"))
+) {
+  pattern = pattern.slice(1, -1);
+}
+if (!pattern) {
+  write("grep: missing pattern\n");
+  return 1;
+}
+
+const stdin = shell.pipe || "";
+
+const ignoreCase = options.includes("i");
+const invertMatch = options.includes("v");
+
+function escapeRegExp(string) {
+  return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+let safePattern = escapeRegExp(pattern);
+
+let regex;
+
+try {
+  regex = new RegExp(safePattern, ignoreCase ? "i" : "");
+} catch {
+  write("grep: invalid pattern\n");
+  return 1;
+}
+
+const lines = stdin.split("\n");
+
+let found = false;
+
+for (const line of lines) {
+  const match = regex.test(line);
+
+  if ((match && !invertMatch) || (!match && invertMatch)) {
+    write(line + "\n");
+    found = true;
+  }
+}
+
+
+if (found) {
+  return 0;
+} else {
+  return 1;
+}
 /usr/bin/groups.js
 5
 if (shell.userPermission == 0) write(window.shell.userName + " everybody\n");
@@ -1864,7 +8578,7 @@ if (shell.userPermission == 2) write(window.shell.userName + " system\n");
 if (shell.userPermission == 3) write(window.shell.userName + " kernel\n");
 if (shell.userPermission == 4) write("root\n");
 /usr/bin/head.js
-113
+109
 let options = [];
 let values = {};
 let argsclean = [];
@@ -1922,12 +8636,8 @@ if ("n" in values) {
 if (isNaN(count)) count = 10;
 
 let path;
-if (filename.startsWith("/")) {
-    path = filename.replace(/\/+/g, "/");
-} else {
-    path = (shell.cwd === "/" ? "/" : shell.cwd + "/") + filename;
-    path = path.replace(/\/+/g, "/");
-}
+let base = filename.startsWith("/") ? filename : (shell.cwd === "/" ? "" : shell.cwd) + "/" + filename;
+path = "/" + base.split("/").filter(Boolean).reduce((a, p) => p === ".." ? (a.pop(), a) : p === "." ? a : (a.push(p), a), []).join("/");
 
 function getParentFolder(path) {
     const parts = path.split("/");
@@ -1978,6 +8688,9 @@ if (fs.files.hasOwnProperty(path)) {
     write(`head: cannot open '${filename}' for reading: No such file or directory\n`);
     return 1;
 }
+/usr/bin/help.js
+1
+if (window.fs.files["/usr/share/help/help"]) write(window.fs.files["/usr/share/help/help"] + "\n");
 /usr/bin/history.js
 1
 if (fs.files["/home/.bash_history"]) write(fs.files["/home/.bash_history"]);
@@ -1989,7 +8702,7 @@ if (shell.args[0].toLowerCase() == "-i") write("127.0.0.1\n");
 1
 write("uid=1000(" + window.shell.userName + ") gid=1000(" + window.shell.userName + ")\n");
 /usr/bin/ls.js
-102
+96
 let options = [];
 let values = {};
 
@@ -2023,14 +8736,8 @@ detectargs();
 let target = shell.args[0] || ".";
 let listPath;
 
-if (target === ".") {
-    listPath = shell.cwd;
-} else if (target.startsWith("/")) {
-    listPath = target.replace(/\/+/g, "/");
-} else {
-    listPath = (shell.cwd === "/" ? "/" : shell.cwd + "/") + target;
-    listPath = listPath.replace(/\/+/g, "/");
-}
+let base = target.startsWith("/") ? target : (shell.cwd === "/" ? "" : shell.cwd) + "/" + target;
+listPath = "/" + base.split("/").filter(Boolean).reduce((a, p) => p === ".." ? (a.pop(), a) : p === "." ? a : (a.push(p), a), []).join("/");
 
 if (listPath !== "/" && !fs.folders.includes(listPath)) {
     write(`ls: cannot access '${target}': No such file or directory\n`);
@@ -2093,7 +8800,7 @@ for (const item of listed) {
 }
 newline();
 /usr/bin/mkdir.js
-60
+56
 if (!shell.args || shell.args.length === 0) {
     write("mkdir: missing operand\n");
     return 1;
@@ -2101,12 +8808,8 @@ if (!shell.args || shell.args.length === 0) {
     const foldername = shell.args[0];
 
     let path;
-    if (foldername.startsWith("/")) {
-        path = foldername.replace(/\/+/g, "/");
-    } else {
-        path = (shell.cwd === "/" ? "/" : shell.cwd + "/") + foldername;
-        path = path.replace(/\/+/g, "/");
-    }
+    let base = foldername.startsWith("/") ? foldername : (shell.cwd === "/" ? "" : shell.cwd) + "/" + foldername;
+    path = "/" + base.split("/").filter(Boolean).reduce((a, p) => p === ".." ? (a.pop(), a) : p === "." ? a : (a.push(p), a), []).join("/");
 
     function getEffectivePermissions(folderPath) {
         const parts = folderPath.split("/").filter(Boolean);
@@ -2155,7 +8858,7 @@ if (!shell.args || shell.args.length === 0) {
     }
 }
 /usr/bin/mv.js
-155
+146
 if (!shell.args || shell.args.length < 2) {
     write("mv: missing file operand\n");
     return 1;
@@ -2167,7 +8870,7 @@ const folder = shell.args[1];
 function getEffectiveWritePermission(folderPath) {
     const parts = folderPath.split("/").filter(Boolean);
     let currentPath = "/";
-    let writePerm = 0; 
+    let writePerm = 0;
 
     for (const part of parts) {
         currentPath = currentPath === "/" ? "/" + part : currentPath + "/" + part;
@@ -2181,7 +8884,7 @@ function getEffectiveWritePermission(folderPath) {
 function getEffectiveReadPermission(folderPath) {
     const parts = folderPath.split("/").filter(Boolean);
     let currentPath = "/";
-    let readPerm = 0; 
+    let readPerm = 0;
 
     for (const part of parts) {
         currentPath = currentPath === "/" ? "/" + part : currentPath + "/" + part;
@@ -2214,74 +8917,63 @@ function canWrite(path) {
     return shell.userPermission >= getEffectiveWritePermission(path) || shell.userPermission === 4;
 }
 
-let path;
-if (target.startsWith("/")) {
-    path = target.replace(/\/+/g, "/");
-} else {
-    path = (shell.cwd === "/" ? "/" : shell.cwd + "/") + target;
-    path = path.replace(/\/+/g, "/");
-}
-let path2;
-if (folder.startsWith("/")) {
-    path2 = folder.replace(/\/+/g, "/");
-} else {
-    path2 = (shell.cwd === "/" ? "/" : shell.cwd + "/") + folder;
-    path2 = path2.replace(/\/+/g, "/");
+function resolvePath(p) {
+    let base = p.startsWith("/") ? p : (shell.cwd === "/" ? "" : shell.cwd) + "/" + p;
+    return "/" + base.split("/").filter(Boolean).reduce((a, part) => {
+        if (part === "..") a.pop();
+        else if (part !== ".") a.push(part);
+        return a;
+    }, []).join("/");
 }
 
-if (fs.folders.includes(path)) {
-    if (containsProtectedItems(path)) {
-        write(`mv: cannot move '${path}' to '${path2}': Permission denied\n`);
-        return 1;
-    }
-} else if (!fs.files.hasOwnProperty(path)) {
+let path = resolvePath(target);
+let path2 = resolvePath(folder);
+
+let isFile = fs.files.hasOwnProperty(path);
+let isFolder = fs.folders.includes(path);
+
+if (!isFile && !isFolder) {
     write(`mv: cannot stat '${path}': No such file or directory\n`);
     return 1;
+}
+
+let finalDest = path2;
+
+if (fs.folders.includes(path2)) {
+    const name = path.split("/").pop();
+    finalDest = path2 === "/" ? "/" + name : path2 + "/" + name;
 }
 
 if (!canWrite(path) || !canRead(path)) {
     write(`mv: cannot move '${path}' to '${path2}': Permission denied\n`);
     return 1;
 }
-if (fs.folders.includes(path2)) {
-    if (!canWrite(path2)) {
-        write(`mv: cannot move '${path}' to '${path2}': Permission denied\n`);
-        return 1;
-    }
-} else if (path2 != "/") {
-    write(`mv: cannot stat '${path2}': No such file or directory\n`);
+
+if (containsProtectedItems(path)) {
+    write(`mv: cannot move '${path}' to '${path2}': Permission denied\n`);
     return 1;
 }
 
-if (fs.files.hasOwnProperty(path)) {
-    let file = fs.files[path];
-    const fileName = path.split("/").pop();
+if (isFile) {
+    const file = fs.files[path];
     delete fs.files[path];
-    if (path2 == "/") {
-        let newfile = "/" + fileName;
-        fs.files[newfile] = file;
-        saveFS1();
-    } else {
-        let newfile = path2 + "/" + fileName;
-        fs.files[newfile] = file;
-        saveFS1();
-    }
-} else if (fs.folders.includes(path)) {
-    const folderName = path.split("/").pop();
-    const newBase = path2 === "/" ? "/" + folderName : path2 + "/" + folderName;
-    if (newBase.startsWith(path + "/")) {
-        return 1;
-    }
+    fs.files[finalDest] = file;
+    saveFS1();
+} else if (isFolder) {
+    if (finalDest.startsWith(path + "/")) return 1;
+
+    const newBase = finalDest;
+
     for (const filePath of Object.keys(fs.files)) {
         if (filePath.startsWith(path + "/")) {
             const relative = filePath.slice(path.length);
-            const newPath = newBase + relative;
-
-            fs.files[newPath] = fs.files[filePath];
+            fs.files[newBase + relative] = fs.files[filePath];
             delete fs.files[filePath];
         }
     }
+
     let updatedFolders = [];
+
     for (const folderPath of fs.folders) {
         if (folderPath === path) continue;
 
@@ -2292,14 +8984,16 @@ if (fs.files.hasOwnProperty(path)) {
             updatedFolders.push(folderPath);
         }
     }
+
     updatedFolders.push(newBase);
     fs.folders = updatedFolders;
+
     const newMeta = {};
+
     for (const metaPath of Object.keys(fs.meta)) {
         if (metaPath === path || metaPath.startsWith(path + "/")) {
             const relative = metaPath.slice(path.length);
-            const newPath = newBase + relative;
-            newMeta[newPath] = {
+            newMeta[newBase + relative] = {
                 ...fs.meta[metaPath]
             };
         } else {
@@ -2312,7 +9006,7 @@ if (fs.files.hasOwnProperty(path)) {
     saveFS1();
 }
 /usr/bin/nano.js
-176
+172
 if (!shell.args || shell.args.length === 0) {
     write("nano: missing operand\n");
     return 1;
@@ -2321,12 +9015,8 @@ if (!shell.args || shell.args.length === 0) {
 const filename = shell.args[0];
 
 let path;
-if (filename.startsWith("/")) {
-    path = filename.replace(/\/+/g, "/");
-} else {
-    path = (shell.cwd === "/" ? "/" : shell.cwd + "/") + filename;
-    path = path.replace(/\/+/g, "/");
-}
+let base = filename.startsWith("/") ? filename : (shell.cwd === "/" ? "" : shell.cwd) + "/" + filename;
+path = "/" + base.split("/").filter(Boolean).reduce((a, p) => p === ".." ? (a.pop(), a) : p === "." ? a : (a.push(p), a), []).join("/");
 
 const parts = path.split("/");
 parts.pop(); 
@@ -2369,26 +9059,26 @@ screen.innerHTML = "";
 
 function render() {
     clear();
-    write("    Nano                    " + path + "                   \n", "black", "white");
+    write("    Nano                    " + path + "                   \n", "black", "white", true);
     buffer.forEach((line, i) => {
         for (let j = 0; j <= line.length; j++) {
             if (i === cursorY && j === cursorX) {
-                write(line[j] || " ", "black", "white"); 
+                write(line[j] || " ", "black", "white", true); 
 
             } else if (j < line.length) {
-                write(line[j], "white");
+                write(line[j], window.shell.theme[0], window.shell.theme[1], true);
             }
         }
         newline();
     });
-    write("\n\n\n\n\n\n\n");
-    write("        ");
-    write(" [ Welcome to Nano ] \n", "black", "white");
-    write("^S", "black", "white");
-    write(" Save");
+    write("\n\n\n\n\n\n\n", window.shell.theme[0], window.shell.theme[1], true);
+    write("        ", window.shell.theme[0], window.shell.theme[1], true);
+    write(" [ Welcome to Nano ] \n", "black", "white", true);
+    write("^S", "black", "white", true);
+    write(" Save", window.shell.theme[0], window.shell.theme[1], true);
     newline();
-    write("^Q", "black", "white");
-    write(" Quit");
+    write("^Q", "black", "white", true);
+    write(" Quit", window.shell.theme[0], window.shell.theme[1], true);
     newline();
 };
 
@@ -2489,15 +9179,79 @@ async function nanoKeyHandler(e) {
 
 document.addEventListener("keydown", nanoKeyHandler);
 render();
+/usr/bin/passwd.js
+66
+if (window.shell.userPermission != 4) {
+    write("Insufficient permissions\n");
+    return;
+}
+async function readInput(promptText = "") {
+    return new Promise(resolve => {
+        let inputBuffer = "";
+
+        function render() {
+            let text = "";
+            for (char of inputBuffer) text += "*";
+            
+            currentLine.textContent = promptText + text;
+            currentLine.style.color = window.shell.theme?.[0] || "white";
+            currentLine.style.backgroundColor = window.shell.theme?.[1] || "black";
+            currentLine.style.fontSize = window.shell.theme?.[3] || "14px";
+            currentLine.style.fontFamily = getComputedStyle(document.body).fontFamily;
+        }
+
+        function onKey(e) {
+            if (e.ctrlKey || e.metaKey || e.altKey) return;
+
+            if (e.key === "Enter") {
+                window.removeEventListener("keydown", onKey);
+                resolve(inputBuffer);
+                return;
+            }
+
+            if (e.key === "Backspace") {
+                inputBuffer = inputBuffer.slice(0, -1);
+                render();
+                return;
+            }
+
+            if (e.key.length === 1) {
+                inputBuffer += e.key;
+                render();
+            }
+        }
+
+        let currentLine = document.createElement("div");
+        screen.appendChild(currentLine);
+
+        render();
+
+        setTimeout(() => {
+            window.addEventListener("keydown", onKey);
+        }, 0);
+    });
+}
+let newpass = "";
+async function request() {
+    const pass = await readInput("New password: ");
+    const pass2 = await readInput("Confirm password: ");
+    newpass = pass
+    return pass == pass2
+}
+window.shell.inputMode = "passwd";
+while (true) {
+    let condition = await request();
+    if (condition && newpass != "") break;
+    write("Passwords do not match or is invalid\n");
+}
+window.shell.inputMode = "command";
+window.fs.meta["/etc"][".superuser"] = newpass;
+saveFS1();
 /usr/bin/powerwash.js
-95
-const disablesudo = shell.dump.includes("disablesudo");
-const bypasspowerwash = shell.dump.includes("bypasspowerwash");
-const enterprise = !shell.dump.includes("enterprise");
-let bypass = false
-if (disablesudo && bypasspowerwash && enterprise) bypass = true;
-if (shell.userPermission < 4 && !bypass) {
-    write("powerwash: Powerwash requires root\n");
+91
+let bypass = !shell.dump.includes("enterprise");
+if (!bypass) {
+    write("powerwash: powerwash is not allowed\n");
     return;
 }
 write("Are you sure you want to powerwash this device?\n");
@@ -2588,7 +9342,49 @@ async function powerwash() {
 return;
 /usr/bin/printenv.js
 1
-executeCommand("cat /tmp/var.conf");
+await executeCommand("cat /etc/var.conf");
+/usr/bin/printf.js
+40
+function splitArgs(input) {
+    const result = [];
+    let current = "";
+    let inQuotes = false;
+    let quoteChar = null;
+
+    for (let i = 0; i < input.length; i++) {
+        const char = input[i];
+        if ((char === '"' || char === "'")) {
+            if (!inQuotes) {
+                inQuotes = true;
+                quoteChar = char;
+                continue;
+            } else if (char === quoteChar) {
+                inQuotes = false;
+                quoteChar = null;
+                continue;
+            }
+        }
+        if (char === " " && !inQuotes) {
+            if (current.length > 0) {
+                result.push(current);
+                current = "";
+            }
+            continue;
+        }
+
+        current += char;
+    }
+
+    if (current.length > 0) {
+        result.push(current);
+    }
+
+    return result;
+}
+let args = splitArgs(shell.args.join(" "))
+if (args.length == 1) write(args[0] + "\n");
+if (args.length == 2) write(args[0] + "\n", args[1]);
+if (args.length == 3) write(args[0] + "\n", args[1], args[2]);
 /usr/bin/ps.js
 3
 for (let item of active) {
@@ -2674,7 +9470,7 @@ if (varName) {
     setVar("REPLY", value);
 }
 /usr/bin/rm.js
-150
+149
 if (!shell.args || shell.args.length === 0) {
     write("rm: missing operand\n");
     return 1;
@@ -2730,13 +9526,8 @@ function canDelete(path) {
 }
 
 let path;
-if (target.startsWith("/")) {
-    path = target.replace(/\/+/g, "/");
-} else {
-    path = (shell.cwd === "/" ? "/" : shell.cwd + "/") + target;
-    path = path.replace(/\/+/g, "/");
-}
-
+let base = target.startsWith("/") ? target : (shell.cwd === "/" ? "" : shell.cwd) + "/" + target;
+path = "/" + base.split("/").filter(Boolean).reduce((a, p) => p === ".." ? (a.pop(), a) : p === "." ? a : (a.push(p), a), []).join("/");
 function containsProtectedItems(folderPath) {
     for (const filePath of Object.keys(fs.files)) {
         if (filePath.startsWith(folderPath + "/") && !canDelete(filePath)) {
@@ -2754,6 +9545,7 @@ function containsProtectedItems(folderPath) {
 function deleteFolderRecursively(folderPath) {
     if (containsProtectedItems(folderPath)) {
         write(`rm: cannot remove '${folderPath}': Permission denied\n`);
+        return 1;
     }
 
     for (const filePath of Object.keys(fs.files)) {
@@ -2787,6 +9579,7 @@ if (path === "/") {
     if (options.includes("r")) {
         if (!options.join("").includes("-no-preserve-root")) { write("rm: it is dangerous to operate recursively on '/'"); return; }
         log("RM", "ATTEMPTING A FULL DISK DELETION", true);
+        
 
         for (const folder of [...fs.folders]) {
             if (folder !== "/") deleteFolderRecursively(folder);
@@ -2801,7 +9594,8 @@ if (path === "/") {
             }
         }
     } else {
-        write(`rm: cannot remove '${target}': Is a directory`);
+        write(`rm: cannot remove '${target}': Is a directory\n`);
+        return 1;
     }
 }
 
@@ -2809,7 +9603,8 @@ else if (fs.folders.includes(path)) {
     if (options.includes("r")) {
         deleteFolderRecursively(path);
     } else {
-        write(`rm: cannot remove '${target}': Is a directory`);
+        write(`rm: cannot remove '${target}': Is a directory\n`);
+        return 1;
     }
 } else if (fs.files.hasOwnProperty(path)) {
     if (!canDelete(path)) {
@@ -2825,6 +9620,150 @@ else if (fs.folders.includes(path)) {
 }
 
 if (typeof saveFS1 === "function") await saveFS1();
+/usr/bin/sh4u.js
+52
+const filename = shell.args[0];
+
+if (!filename) {
+    write("Interactive mode is not available\n");
+    return 1;
+}
+let path;
+let base = filename.startsWith("/") ? filename : (shell.cwd === "/" ? "" : shell.cwd) + "/" + filename;
+path = "/" + base.split("/").filter(Boolean).reduce((a, p) => p === ".." ? (a.pop(), a) : p === "." ? a : (a.push(p), a), []).join("/");
+
+function getParentFolder(path) {
+    const parts = path.split("/");
+    parts.pop(); 
+
+    return parts.join("/") || "/";
+}
+
+const parentFolder = getParentFolder(path);
+if (!fs.folders.includes(parentFolder) && parentFolder != "/") {
+    write(`sh4u: ${filename}: No such file or directory\n`);
+    return 1;
+}
+
+function hasReadPermission(path) {
+    if (shell.userPermission === 4) return true; 
+
+    const parts = path.split("/").filter(Boolean);
+    let currentPath = "/";
+    let readPerm = 0;
+
+    for (const part of parts) {
+        currentPath = currentPath === "/" ? "/" + part : currentPath + "/" + part;
+        const meta = fs.meta[currentPath];
+        if (!meta) continue;
+
+        if (meta.readpermission !== undefined) readPerm = parseInt(meta.readpermission);
+    }
+
+    return shell.userPermission >= readPerm;
+}
+
+if (!hasReadPermission(path)) {
+    write(`sh4u: ${filename}: Permission denied\n`);
+    return 1;
+}
+
+if (fs.files.hasOwnProperty(path)) {
+    window.sap.playsap(path, true)
+} else {
+    write(`sh4u: ${filename}: No such file or directory\n`);
+    return 1
+}
+/usr/bin/shuf.js
+88
+let options = [];
+let values = {};
+let argsclean = [];
+let origargs = shell.args;
+
+function detectargs() {
+    let newArgs = [];
+
+    for (let i = 0; i < shell.args.length; i++) {
+        let item = shell.args[i];
+
+        if (item.startsWith("-") && item.length > 1) {
+            let key = item.slice(1);
+            let next = shell.args[i + 1];
+
+            options.push(...key.split(""));
+
+            if (next && !next.startsWith("-")) {
+                values[key] = next;
+                newArgs.push(next);
+
+                i++;
+            } else {
+                values[key] = true;
+            }
+        } else {
+            newArgs.push(item);
+        }
+    }
+    argsclean = newArgs.filter(item => {
+        return !Object.values(values).includes(item);
+    });
+
+    shell.args = newArgs;
+}
+detectargs();
+const range = values["i"];
+
+if (!range) {
+    write("shuf: no range provided\n");
+    return;
+}
+
+const parts = range.split("-");
+
+if (parts.length !== 2) {
+    write("shuf: invalid range format\n");
+    return;
+}
+
+let start = parseInt(parts[0], 10);
+let end = parseInt(parts[1], 10);
+
+if (isNaN(start) || isNaN(end)) {
+    write("shuf: invalid numbers in range\n");
+    return;
+}
+
+if (start > end) {
+    write("shuf: start must be <= end\n");
+    return;
+}
+
+let numbers = [];
+
+for (let i = start; i <= end; i++) {
+    numbers.push(i);
+}
+
+for (let i = numbers.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [numbers[i], numbers[j]] = [numbers[j], numbers[i]];
+}
+
+let count = numbers.length;
+
+if (values["n"] !== undefined) {
+    count = parseInt(values["n"], 10);
+
+    if (isNaN(count) || count < 0) {
+        write("shuf: invalid count\n");
+        return;
+    }
+}
+
+for (let i = 0; i < Math.min(count, numbers.length); i++) {
+    write(numbers[i] + "\n");
+}
 /usr/bin/sleep.js
 30
 let input = shell.args[0];
@@ -2858,19 +9797,15 @@ shell.inputMode = "sleep";
 await wait(ms);
 shell.inputMode = "command";
 /usr/bin/stat.js
-22
+18
 if (!shell.args || shell.args.length === 0) {
     write("stat: missing operand\n");
     return 1;
 }
 const target = shell.args[0];
 let path;
-if (target.startsWith("/")) {
-    path = target.replace(/\/+/g, "/");
-} else {
-    path = (shell.cwd === "/" ? "/" : shell.cwd + "/") + target;
-    path = path.replace(/\/+/g, "/");
-}
+let base = target.startsWith("/") ? target : (shell.cwd === "/" ? "" : shell.cwd) + "/" + target;
+path = "/" + base.split("/").filter(Boolean).reduce((a, p) => p === ".." ? (a.pop(), a) : p === "." ? a : (a.push(p), a), []).join("/");
 if (!fs.meta.hasOwnProperty(path)) {
     write(`stat: cannot statx '${path}'\n`);
     return 1;
@@ -2925,8 +9860,8 @@ if (!shell.args || shell.args.length === 0) {
 
             let newPerm = prevPermission;
 
-            if (fs.files["/tmp/var.conf"]) {
-                const lines = fs.files["/tmp/var.conf"].split("\n");
+            if (fs.files["/etc/var.conf"]) {
+                const lines = fs.files["/etc/var.conf"].split("\n");
 
                 for (let line of lines) {
                     line = line.trim();
@@ -2970,11 +9905,11 @@ try {
     for (const key in fs.meta) delete fs.meta[key];
     for (const key in newFS.meta) fs.meta[key] = newFS.meta[key];
 } catch (e) {
-    log("kernel", "FS1 SYNC FAILED", true);
+    log("kernel", "FS1 SYNC FAILED");
     write("[FS1 sync failed: " + e.message + "]\n");
 }
 /usr/bin/tac.js
-62
+58
 const filename = shell.args[0];
 
 if (!filename) {
@@ -2983,12 +9918,8 @@ if (!filename) {
 }
 
 let path;
-if (filename.startsWith("/")) {
-    path = filename.replace(/\/+/g, "/");
-} else {
-    path = (shell.cwd === "/" ? "/" : shell.cwd + "/") + filename;
-    path = path.replace(/\/+/g, "/");
-}
+let base = filename.startsWith("/") ? filename : (shell.cwd === "/" ? "" : shell.cwd) + "/" + filename;
+path = "/" + base.split("/").filter(Boolean).reduce((a, p) => p === ".." ? (a.pop(), a) : p === "." ? a : (a.push(p), a), []).join("/");
 
 function getParentFolder(path) {
     const parts = path.split("/");
@@ -3038,7 +9969,7 @@ if (fs.files.hasOwnProperty(path)) {
     return 1;
 }
 /usr/bin/tail.js
-113
+109
 let options = [];
 let values = {};
 let argsclean = [];
@@ -3096,12 +10027,8 @@ if ("n" in values) {
 if (isNaN(count)) count = 10;
 
 let path;
-if (filename.startsWith("/")) {
-    path = filename.replace(/\/+/g, "/");
-} else {
-    path = (shell.cwd === "/" ? "/" : shell.cwd + "/") + filename;
-    path = path.replace(/\/+/g, "/");
-}
+let base = filename.startsWith("/") ? filename : (shell.cwd === "/" ? "" : shell.cwd) + "/" + filename;
+path = "/" + base.split("/").filter(Boolean).reduce((a, p) => p === ".." ? (a.pop(), a) : p === "." ? a : (a.push(p), a), []).join("/");
 
 function getParentFolder(path) {
     const parts = path.split("/");
@@ -3153,7 +10080,7 @@ if (fs.files.hasOwnProperty(path)) {
     return 1;
 }
 /usr/bin/touch.js
-51
+45
 if (!shell.args || shell.args.length === 0) {
     write("touch: missing file operand");
     return 1;
@@ -3161,14 +10088,8 @@ if (!shell.args || shell.args.length === 0) {
     const filename = shell.args[0];
 
     let path;
-    if (filename.startsWith("/")) {
-        path = filename.replace(/\/+/g, "/"); 
-
-    } else {
-        path = (shell.cwd === "/" ? "/" : shell.cwd + "/") + filename; 
-
-        path = path.replace(/\/+/g, "/");
-    }
+    let base = filename.startsWith("/") ? filename : (shell.cwd === "/" ? "" : shell.cwd) + "/" + filename;
+    path = "/" + base.split("/").filter(Boolean).reduce((a, p) => p === ".." ? (a.pop(), a) : p === "." ? a : (a.push(p), a), []).join("/");
 
     const parts = path.split("/");
     parts.pop(); 
@@ -3235,7 +10156,7 @@ for (const filePath in fs.files) {
     }
 }
 /usr/bin/type.js
-45
+42
 if (!shell.args || shell.args.length === 0) {
     write("type: missing operand\n");
     return 1;
@@ -3257,12 +10178,8 @@ function getEffectiveWritePermission(folderPath) {
 const filename = shell.args[0];
 
 let path;
-if (filename.startsWith("/")) {
-    path = filename.replace(/\/+/g, "/");
-} else {
-    path = (shell.cwd === "/" ? "/" : shell.cwd + "/") + filename;
-    path = path.replace(/\/+/g, "/");
-}
+let base = filename.startsWith("/") ? filename : (shell.cwd === "/" ? "" : shell.cwd) + "/" + filename;
+path = "/" + base.split("/").filter(Boolean).reduce((a, p) => p === ".." ? (a.pop(), a) : p === "." ? a : (a.push(p), a), []).join("/");
 
 const parts = path.split("/");
 parts.pop(); 
@@ -3281,14 +10198,30 @@ if (parentWritePerm > shell.userPermission && shell.userPermission !== 4) {
 
 window.typemode = true;
 window.typefile = path;
+window.fs.files[path] = "";
+/usr/bin/unalias.js
+10
+const userinput = shell.args[0];
+if (!userinput) {
+    write("Interactive mode is not available\n");
+    return 1;
+}
+if (window.shell.aliases[userinput]) {
+  delete window.shell.aliases[userinput];
+} else {
+  write("Alias not found\n");
+}
 /usr/bin/uname.js
 3
 if (shell.args.length === 0) { write("Linux\n"); return; }
-if (shell.args[0].toLowerCase() == "-a") write("Linux " + shell.hostName + " 6.1.38-chrome12.5-g44bda5e8f6-ab137h7568\n");
-if (shell.args[0].toLowerCase() == "-r") write("6.1.38-chrome12.5-g44bda5e8f6-ab137h7568\n");
+if (shell.args[0].toLowerCase() == "-a") write("Linux " + shell.hostName + " BrowserLinux Kernel\n");
+if (shell.args[0].toLowerCase() == "-r") write("BrowserLinux Kernel\n");
 /usr/bin/uptime.js
 1
 write(window.uptime + " up\n");
+/usr/bin/version.js
+1
+write(window.version || "Unknown");
 /usr/bin/which.js
 50
 const cmdInput = shell.args[0];
@@ -3348,6 +10281,9 @@ write(window.shell.userName + "\n");
 /usr/bin/whoami.js
 1
 write(shell.userName + "\n");
+/usr/bin/wiki.js
+1
+window.open("https://vrdog28.github.io/BrowserLinux/wiki");
 /usr/bin/yes.js
 17
 const text = shell.args.join(" ") || "y";
@@ -3414,106 +10350,6 @@ for (let li = 0; li < lines.length; li++) {
 
     write("\n");
 }
-/usr/local/bin/neofetch.js
-98
-const osName = window.shell.osName;
-const browserName = window.shell.browserName;
-const userName = window.shell.userName;
-const hostName = window.shell.hostName;
-const cwdDisplay = shell.cwd || "\\";
-
-const terminalWidth = 60;
-
-function pad(str, length) {
-    return str + " ".repeat(Math.max(0, length - str.length));
-}
-
-function gradientLine(text, startColor, endColor) {
-    const result = [];
-    const len = text.length;
-
-    for (let i = 0; i < len; i++) {
-        const char = text[i];
-
-        if (char === " ") {
-            result.push({
-                char,
-                color: null
-            });
-            continue;
-        }
-
-        const ratio = i / len;
-
-        const r = Math.floor(startColor.r + (endColor.r - startColor.r) * ratio);
-        const g = Math.floor(startColor.g + (endColor.g - startColor.g) * ratio);
-        const b = Math.floor(startColor.b + (endColor.b - startColor.b) * ratio);
-
-        result.push({
-            char,
-            color: `rgb(${r}, ${g}, ${b})`
-        });
-    }
-
-    return result;
-}
-
-const rawLogo = [
-    "     **********     ",
-    "  ****************  ",
-    " ********++++++++++ ",
-    "++****=.-++-.:------",
-    "+++**:-******-.-----",
-    "+++++.********.-----",
-    "++**+:-******-.-----",
-    "******=.-++-.-------",
-    " ********++*+------ ",
-    "  *********=------  ",
-    "     *****+:--:     "
-];
-
-const startColor = {
-    r: 255,
-    g: 80,
-    b: 80
-};
-const endColor = {
-    r: 80,
-    g: 200,
-    b: 255
-};
-
-const logo = rawLogo.map(line => gradientLine(line, startColor, endColor));
-
-const infoLines = [
-    `User: ${userName}@${hostName}`,
-    `OS: ${osName}`,
-    `Browser: ${browserName}`,
-    `CWD: ${cwdDisplay}`,
-    `Date: ${new Date().toLocaleString()}`
-];
-
-function writeGradientLine(gradientChars, textRight = "") {
-
-    for (let i = 0; i < gradientChars.length; i++) {
-        const {
-            char,
-            color
-        } = gradientChars[i];
-        write(char, color || "white");
-    }
-
-    const padSize = terminalWidth - gradientChars.length;
-    write(" ".repeat(Math.max(0, padSize)));
-
-    write(" " + textRight + "\n", "cyan");
-}
-
-for (let i = 0; i < Math.max(logo.length, infoLines.length); i++) {
-    writeGradientLine(logo[i] || [], infoLines[i] || "");
-}
-
-newline();
 /usr/local/bin/womki.js
 2
 clear();
@@ -3523,7 +10359,7 @@ runFile("/usr/local/womki/main.js");
 tokens=0
 money=10
 /usr/local/womki/main.js
-308
+316
 function loadData() {
     const path = "/usr/local/womki/data";
     const fileContent = window.fs.files[path];
@@ -3799,7 +10635,7 @@ async function main() {
                     main();
                     break;
                 case "3":
-                    exitwomki();
+                    await exitwomki();
                     return;
                 case "4":
                     await BuyTokens();
@@ -3824,20 +10660,7098 @@ async function main() {
     });
 }
 
-function exitwomki() {
-    window.shell.inputMode = "command"
+async function exitwomki() {
+    if (window.sap.playing) {
+        window.sap.stop = true;
+        while (window.sap.stop == true) {
+            await wait(100);
+        }
+    }
+    window.shell.inputMode = "command";
     saveFS1();
     clear();
     prompt();
+    return 0;
 }
 window.shell.inputMode = "womki"
+sap.playsap("/usr/local/womki/music")
 main();
+/usr/local/womki/music
+6827
+440
+900
+A2 452
+50
+E3 452
+52
+A3 300
+50
+C4 300
+38
+E4 300
+38
+A4 300
+38
+C5 150
+38
+A5 150
+600
+A4 150
+150
+C5 150
+150
+B4 150
+150
+A4 150
+150
+E3 452
+50
+B3 452
+52
+E4 300
+50
+G#4 300
+38
+B4 300
+38
+E5 300
+38
+G#5 150
+38
+E6 150
+600
+E4 150
+150
+G#4 150
+150
+F#4 150
+150
+E4 150
+150
+A2 452
+50
+E3 452
+52
+A3 300
+50
+C4 300
+38
+E4 300
+38
+A4 300
+38
+C5 150
+38
+A5 150
+600
+A4 150
+150
+C5 150
+150
+B4 150
+150
+A4 150
+150
+E3 452
+50
+B3 452
+52
+E4 300
+50
+G#4 300
+38
+B4 300
+38
+G#5 300
+38
+E6 150
+38
+E5 600
+600
+E4 150
+600
+A2 452
+50
+E3 452
+52
+A3 300
+50
+C4 300
+38
+E4 300
+38
+A4 300
+38
+C5 150
+38
+A5 150
+600
+A4 150
+150
+C5 150
+150
+B4 150
+150
+A4 150
+150
+E3 452
+50
+B3 452
+52
+E4 300
+50
+G#4 300
+38
+B4 300
+38
+E5 300
+38
+G#5 150
+38
+E6 150
+600
+E4 150
+150
+G#4 150
+150
+F#4 150
+150
+E4 150
+150
+A2 452
+50
+E3 452
+52
+A3 300
+50
+C4 300
+38
+E4 300
+38
+A4 300
+38
+C5 150
+38
+A5 150
+600
+A4 150
+150
+C5 150
+150
+B4 150
+150
+A4 150
+150
+E3 452
+50
+B3 452
+52
+E4 300
+50
+G#4 300
+38
+B4 300
+38
+G#5 300
+38
+E6 150
+38
+E5 600
+600
+E4 150
+600
+A2 452
+50
+E3 452
+52
+A3 300
+50
+C#4 300
+38
+E5 300
+38
+A5 300
+38
+C#6 150
+38
+A6 150
+600
+A5 150
+150
+A#5 150
+150
+A5 150
+150
+G5 150
+150
+D3 452
+50
+A3 452
+52
+D4 300
+50
+F4 300
+38
+A4 300
+38
+F5 300
+38
+A5 150
+38
+F6 150
+600
+D5 150
+150
+F5 150
+150
+E5 150
+150
+D5 150
+150
+G2 452
+50
+D3 452
+52
+G3 300
+50
+B3 300
+38
+D5 300
+38
+G5 300
+38
+B5 150
+38
+G6 150
+600
+G5 150
+150
+A5 150
+150
+G5 150
+150
+F5 150
+150
+C3 452
+50
+G3 452
+52
+C4 300
+50
+E4 300
+38
+G4 300
+38
+E5 300
+38
+G5 150
+38
+E6 150
+600
+C5 150
+150
+E5 150
+150
+D5 150
+150
+C5 150
+150
+D3 452
+50
+F3 452
+52
+B3 300
+50
+F4 300
+38
+B4 300
+38
+F5 300
+38
+B5 150
+38
+F6 150
+600
+B4 150
+150
+D5 150
+150
+C5 150
+150
+B4 150
+150
+C3 450
+100
+C4 300
+50
+E4 300
+38
+A4 300
+38
+E5 300
+38
+A5 150
+38
+E6 150
+600
+A4 150
+150
+C5 150
+150
+B4 150
+150
+A4 150
+150
+F3 600
+F4 600
+450
+D#4 150
+A3 150
+D#5 150
+150
+E3 600
+E4 600
+150
+E5 150
+150
+D5 150
+150
+D4 150
+G#3 150
+B4 150
+150
+C4 600
+A3 600
+E4 600
+A4 600
+600
+A4 150
+E4 150
+A5 150
+C5 150
+600
+A2 452
+50
+E3 452
+52
+A3 300
+50
+C#4 300
+38
+E5 300
+38
+A5 300
+38
+C#6 150
+38
+A6 150
+600
+A5 150
+C#4 300
+E4 300
+A4 300
+150
+A#5 150
+150
+A5 150
+150
+G5 150
+150
+D3 450
+75
+A3 450
+75
+F4 300
+38
+A4 300
+38
+F5 300
+38
+A5 150
+38
+F6 150
+600
+D5 150
+D4 300
+F4 300
+A4 300
+150
+F5 150
+150
+E5 150
+150
+D5 150
+150
+G2 450
+75
+D3 450
+75
+B3 300
+38
+D5 300
+38
+G5 300
+38
+B5 150
+38
+G6 150
+600
+G5 150
+B3 300
+D4 300
+G4 300
+150
+A5 150
+150
+G5 150
+150
+F5 150
+150
+C3 450
+75
+G3 450
+75
+E4 300
+38
+G4 300
+38
+E5 300
+38
+G5 150
+38
+E6 150
+600
+C5 150
+E4 300
+G4 300
+150
+E5 150
+150
+D5 150
+150
+C5 150
+150
+D3 450
+75
+A#3 300
+75
+F4 300
+75
+A#4 300
+38
+F5 150
+38
+F6 150
+600
+A#4 150
+F4 300
+D4 300
+150
+D5 150
+150
+C5 150
+150
+A#4 150
+150
+C3 450
+75
+C4 300
+75
+E4 300
+75
+A4 300
+38
+E5 150
+38
+E6 150
+600
+A4 150
+E4 300
+C4 300
+150
+C5 150
+150
+B4 150
+150
+A4 150
+150
+F3 600
+F4 600
+450
+D#4 150
+A3 150
+D#5 150
+150
+E3 600
+E4 600
+150
+E5 150
+150
+D5 150
+150
+D4 150
+G#3 150
+B4 150
+150
+C4 600
+A3 600
+E4 600
+A4 600
+600
+A4 150
+E4 150
+A5 150
+C5 150
+600
+A3 150
+E6 150
+200
+C6 150
+202
+A5 150
+50
+A3 150
+150
+A3 150
+E5 150
+150
+C4 150
+50
+C5 150
+100
+B3 152
+102
+A4 150
+50
+A3 150
+150
+E4 150
+B5 150
+200
+G#5 150
+202
+E5 150
+50
+E3 150
+150
+E3 150
+B4 150
+150
+G3 150
+50
+G#4 150
+100
+F3 152
+102
+E4 150
+50
+E3 150
+150
+E6 152
+A2 453
+50
+E3 453
+52
+A3 50
+50
+C4 302
+50
+C6 150
+202
+A5 152
+50
+A3 152
+152
+A3 150
+E5 150
+150
+C4 150
+50
+C5 150
+100
+B3 152
+102
+A4 150
+50
+A3 150
+150
+E4 602
+200
+G#4 150
+E5 150
+202
+B4 150
+G#5 150
+200
+E3 150
+E6 150
+E5 150
+600
+A3 150
+E6 150
+200
+C6 150
+202
+A5 150
+50
+A3 150
+150
+A3 150
+E5 150
+150
+C4 150
+50
+C5 150
+100
+B3 152
+102
+A4 150
+50
+A3 150
+150
+E4 150
+B5 150
+200
+G#5 150
+202
+E5 150
+50
+E3 150
+150
+E3 150
+B4 150
+150
+G3 150
+50
+G#4 150
+100
+F3 152
+102
+E4 150
+50
+E3 150
+150
+A3 150
+E6 150
+200
+C6 150
+202
+A5 150
+50
+A3 150
+150
+A3 150
+E5 150
+150
+C4 150
+50
+C5 150
+100
+B3 152
+102
+A4 150
+50
+A3 150
+150
+E4 602
+200
+G#4 150
+E5 150
+202
+B4 150
+G#5 150
+200
+E3 150
+E6 150
+E5 150
+412
+A3 300
+38
+E4 300
+38
+A4 300
+38
+A5 150
+38
+C#6 150
+38
+A6 150
+200
+E6 150
+202
+C#6 150
+50
+A4 150
+150
+A4 150
+A5 150
+150
+A#4 150
+50
+E5 150
+100
+A4 152
+102
+C#5 150
+50
+G4 150
+100
+D3 150
+50
+F4 150
+200
+A4 150
+D5 150
+202
+D5 150
+F5 150
+50
+D4 150
+150
+D4 150
+F5 150
+A5 150
+150
+F4 150
+50
+A5 150
+D6 150
+100
+E4 152
+102
+D6 150
+F6 150
+50
+D4 150
+150
+G3 445
+59
+D4 297
+59
+G4 297
+59
+G5 297
+59
+B5 148
+59
+G6 148
+197
+D6 150
+202
+B5 150
+50
+G4 150
+150
+G4 150
+G5 150
+150
+A4 150
+50
+D5 150
+100
+G4 152
+102
+B4 150
+50
+F4 150
+100
+C3 150
+50
+E4 150
+200
+G4 150
+C5 150
+202
+C5 150
+E5 150
+50
+C4 150
+150
+C4 150
+E5 150
+G5 150
+150
+E4 150
+50
+G5 150
+C6 150
+100
+D4 152
+102
+C6 150
+E6 150
+50
+C4 150
+75
+D3 150
+38
+G#3 150
+38
+F4 150
+B5 150
+F6 150
+200
+G#5 150
+D6 150
+202
+F5 150
+B5 150
+50
+B3 150
+150
+B3 150
+D5 150
+G#5 150
+150
+D4 150
+50
+B4 150
+F5 150
+100
+C4 152
+102
+D5 150
+50
+B3 150
+75
+C3 150
+75
+E4 150
+E6 150
+200
+C6 150
+202
+A5 150
+50
+A3 150
+150
+A3 150
+E5 150
+150
+C4 150
+50
+C5 150
+100
+B3 152
+102
+A4 150
+50
+A3 150
+150
+F3 602
+200
+D#4 150
+B4 150
+202
+D#5 150
+A4 150
+50
+B3 150
+150
+E3 602
+150
+E4 150
+50
+E5 150
+G#4 150
+100
+D4 152
+102
+G#5 150
+B4 150
+50
+B3 150
+150
+A3 602
+200
+A5 150
+C5 150
+202
+E5 150
+C6 150
+200
+E4 150
+C5 150
+A5 150
+A6 150
+600
+A2 150
+F2 600
+150
+G#2 150
+150
+A2 150
+150
+G#2 150
+75
+A#2 150
+75
+A2 150
+150
+B2 150
+150
+C3 150
+150
+D3 150
+150
+E3 150
+G#2 600
+E2 600
+150
+D#3 150
+150
+E3 150
+150
+D#3 150
+75
+F3 150
+75
+E3 150
+150
+D3 150
+150
+C3 150
+150
+B2 150
+150
+A2 150
+F2 600
+150
+G#2 150
+150
+A2 150
+150
+G#2 150
+75
+A#2 150
+75
+A2 150
+150
+B2 150
+150
+C3 150
+150
+D3 150
+150
+E3 150
+G#2 600
+E2 600
+150
+D#3 150
+150
+E3 150
+150
+D#3 150
+75
+F3 150
+75
+E3 300
+600
+A3 150
+F3 600
+150
+G#3 150
+150
+A3 150
+150
+G#3 150
+75
+A#3 150
+75
+A3 150
+150
+B3 150
+150
+C4 150
+150
+D4 150
+150
+E4 150
+G#3 600
+E3 600
+150
+D#4 150
+150
+E4 150
+150
+D#4 150
+75
+F4 150
+75
+E4 150
+150
+D4 150
+150
+C4 150
+150
+B3 150
+150
+A3 150
+F3 600
+150
+G#3 150
+150
+A3 150
+150
+G#3 150
+75
+A#3 150
+75
+A3 150
+150
+B3 150
+150
+C4 150
+150
+D4 150
+150
+E4 150
+G#3 600
+E3 600
+150
+D#4 150
+150
+E4 150
+150
+D#4 150
+75
+F4 150
+75
+E4 300
+600
+A4 150
+E4 600
+C#4 600
+150
+G#4 150
+150
+A4 150
+150
+G#4 150
+75
+A#4 150
+75
+A4 150
+150
+G4 150
+150
+F4 150
+150
+E4 150
+150
+D4 150
+A3 600
+F3 600
+150
+C#4 150
+150
+D4 150
+150
+C#4 150
+75
+D#4 150
+75
+D4 150
+150
+E4 150
+150
+F4 150
+150
+D4 150
+150
+G4 150
+D4 600
+B3 600
+150
+F#4 150
+150
+G4 150
+150
+F#4 150
+75
+G#4 150
+75
+G4 150
+150
+F4 150
+150
+E4 150
+150
+D4 150
+150
+C4 150
+G3 600
+E3 600
+150
+B3 150
+150
+C4 150
+150
+B3 150
+75
+C#4 150
+75
+C4 150
+150
+D4 150
+150
+E4 150
+150
+C4 150
+150
+F4 150
+G#3 600
+D3 600
+150
+E4 150
+150
+F4 150
+150
+E4 150
+75
+G4 150
+75
+F4 150
+150
+D4 150
+150
+C4 150
+150
+B3 150
+150
+E4 150
+A3 600
+C3 600
+150
+D#4 150
+150
+E4 150
+150
+D#4 150
+75
+F4 150
+75
+E4 150
+150
+C4 150
+150
+B3 150
+150
+A3 150
+150
+A#3 150
+F3 600
+D3 600
+150
+A3 150
+150
+A#3 150
+150
+A3 150
+75
+C4 150
+75
+B3 150
+E3 300
+G#3 300
+150
+F4 150
+150
+E4 150
+150
+G#3 150
+150
+A3 150
+150
+G#3 150
+150
+A3 150
+D3 150
+F3 150
+150
+G#3 150
+150
+A3 150
+C3 150
+E3 150
+600
+A2 150
+150
+G#2 150
+150
+A2 150
+150
+G#2 150
+75
+A#2 150
+75
+A2 150
+C#4 600
+E3 600
+G3 600
+150
+G2 150
+150
+F2 150
+150
+E2 150
+150
+D2 150
+150
+C#2 150
+150
+D2 150
+150
+C#2 150
+75
+D#2 150
+75
+D2 150
+F4 600
+F3 600
+A3 600
+150
+E2 150
+150
+F2 150
+150
+D2 150
+150
+G2 150
+150
+F#2 150
+150
+G2 150
+150
+F#2 150
+75
+G#2 150
+75
+G2 150
+B3 600
+D3 600
+F3 600
+150
+F2 150
+150
+E2 150
+150
+D2 150
+150
+C2 150
+150
+B1 150
+150
+C2 150
+150
+B1 150
+75
+C#2 150
+75
+C2 150
+E4 600
+E3 600
+G3 600
+150
+D2 150
+150
+E2 150
+150
+C2 150
+150
+F2 150
+150
+E2 150
+150
+F2 150
+150
+E2 150
+75
+G2 150
+75
+F2 150
+B3 600
+D3 600
+G#3 600
+150
+D2 150
+150
+C2 150
+150
+B1 150
+150
+E2 150
+150
+D#2 150
+150
+E2 150
+150
+D#2 150
+75
+F2 150
+75
+E2 150
+C4 600
+E3 600
+A3 600
+150
+C2 150
+150
+B1 150
+150
+A1 150
+150
+B1 150
+D4 300
+F3 600
+A3 600
+150
+A#1 150
+150
+B1 150
+D#4 300
+150
+A#1 150
+150
+C2 150
+E4 300
+E3 300
+G#3 300
+150
+B1 150
+150
+F2 150
+150
+E2 150
+150
+A1 150
+150
+G#1 150
+150
+A1 150
+150
+G#1 150
+75
+A#1 150
+75
+A1 150
+D4 300
+F3 300
+A3 300
+150
+G#1 150
+150
+A1 150
+150
+G#1 150
+150
+A1 150
+E3 300
+A3 300
+C4 300
+150
+G#1 150
+150
+A1 150
+150
+G#1 150
+75
+A#1 150
+75
+A1 150
+D3 300
+F3 300
+A3 300
+150
+G#1 150
+150
+A1 150
+150
+G#1 150
+150
+A1 150
+C3 300
+E3 300
+A3 300
+150
+G#1 150
+150
+A1 150
+150
+G#1 150
+75
+A#1 150
+75
+A1 150
+D3 300
+F3 300
+150
+G#1 150
+150
+A1 150
+150
+G#1 150
+150
+A1 300
+C3 300
+E3 300
+A3 300
+1200
+A4 150
+A3 150
+C3 600
+C2 600
+150
+D#4 150
+F#4 150
+300
+F#3 150
+D#3 150
+C4 150
+A3 150
+A4 150
+150
+D#3 150
+F#3 150
+C4 150
+A4 150
+A3 150
+150
+C5 150
+C4 150
+150
+B4 150
+B3 150
+A1 300
+A2 300
+150
+A4 150
+A3 150
+150
+E5 150
+E4 150
+G#1 300
+G#2 300
+150
+G#4 150
+B4 150
+150
+B1 300
+B2 300
+150
+E4 150
+E5 150
+150
+E5 150
+E4 150
+E2 600
+G#2 600
+E3 600
+150
+G5 150
+G4 150
+150
+F5 150
+F4 150
+150
+E5 150
+E4 150
+150
+A4 150
+A3 150
+C3 600
+C2 600
+150
+D#4 150
+F#4 150
+300
+F#3 150
+D#3 150
+C4 150
+A3 150
+A4 150
+150
+D#3 150
+F#3 150
+C4 150
+A4 150
+A3 150
+150
+C5 150
+C4 150
+150
+B4 150
+B3 150
+A1 300
+A2 300
+150
+A4 150
+A3 150
+150
+G#4 150
+G#3 150
+B1 300
+B2 300
+150
+B3 150
+150
+D#2 300
+D#3 300
+150
+D#4 150
+150
+F2 300
+F3 300
+G#3 300
+F4 300
+B3 300
+300
+E2 150
+E3 150
+E4 150
+300
+A5 150
+A4 150
+C3 600
+C2 600
+150
+D#5 150
+F#5 150
+300
+F#3 150
+D#3 150
+C4 150
+A4 150
+A5 150
+150
+D#3 150
+F#3 150
+C4 150
+A5 150
+A4 150
+150
+C6 150
+C5 150
+150
+B5 150
+B4 150
+A1 300
+A2 300
+150
+A5 150
+A4 150
+150
+E6 150
+E5 150
+G#1 300
+G#2 300
+150
+G#5 150
+B5 150
+150
+B1 300
+B2 300
+150
+E5 150
+E6 150
+150
+E6 150
+E5 150
+E2 600
+G#2 600
+E3 600
+150
+G6 150
+G5 150
+150
+F6 150
+F5 150
+150
+E6 150
+E5 150
+150
+A5 150
+A4 150
+C3 600
+C2 600
+150
+D#5 150
+F#5 150
+300
+F#3 150
+D#3 150
+C4 150
+A4 150
+A5 150
+150
+D#3 150
+F#3 150
+C4 150
+A5 150
+A4 150
+150
+C6 150
+C5 150
+150
+B5 150
+B4 150
+A1 300
+A2 300
+150
+A5 150
+A4 150
+150
+G#5 150
+G#4 150
+B1 300
+B2 300
+150
+B5 150
+B4 150
+150
+D#2 300
+D#3 300
+150
+D#6 150
+D#5 150
+150
+F2 300
+F3 300
+F6 300
+F5 300
+300
+E2 150
+E3 150
+E6 150
+E5 150
+300
+A5 150
+A6 150
+G5 150
+A2 600
+E3 600
+150
+C#6 150
+E6 150
+300
+C#4 150
+E4 150
+A4 150
+A5 150
+A6 150
+150
+C#4 150
+E4 150
+A4 150
+A6 150
+A5 150
+150
+A#6 150
+A#5 150
+150
+A6 150
+A5 150
+C#2 300
+E3 300
+150
+G6 150
+G5 150
+150
+F6 150
+F5 150
+D2 300
+F3 300
+150
+A5 150
+D6 150
+150
+E2 300
+G3 300
+150
+C#5 150
+C#6 150
+150
+D6 150
+D5 150
+F2 300
+G#3 300
+150
+F6 150
+F5 150
+150
+D#6 150
+D#5 150
+F#2 300
+A3 300
+150
+D6 150
+D5 150
+150
+G5 150
+G6 150
+F5 150
+G2 600
+D3 600
+150
+B5 150
+D6 150
+300
+B3 150
+D4 150
+G4 150
+G5 150
+G6 150
+150
+B3 150
+D4 150
+G4 150
+G6 150
+G5 150
+150
+G#6 150
+G#5 150
+150
+G6 150
+G5 150
+B1 300
+D3 300
+150
+F6 150
+F5 150
+150
+E6 150
+E5 150
+C2 300
+E3 300
+150
+G5 150
+C6 150
+150
+D2 300
+F3 300
+150
+B4 150
+B5 150
+150
+C6 150
+C5 150
+D#2 300
+F#3 300
+150
+D#6 150
+D#5 150
+150
+C#6 150
+C#5 150
+E2 300
+G3 300
+150
+C6 150
+C5 150
+150
+B2 150
+F2 150
+D3 150
+G#3 150
+F6 150
+F5 150
+150
+G#5 150
+B5 150
+300
+D4 150
+F4 150
+G#4 150
+B4 150
+150
+D4 150
+B4 150
+F4 600
+G#4 600
+150
+B3 150
+D5 150
+150
+C4 150
+C5 150
+150
+D4 150
+B4 150
+150
+E2 150
+C3 150
+A3 150
+E6 150
+E5 150
+150
+A5 150
+C6 150
+300
+C4 150
+E4 150
+A4 150
+150
+C4 150
+A4 150
+E4 600
+150
+A3 150
+C5 150
+150
+B3 150
+B4 150
+150
+C4 150
+A4 150
+150
+D4 150
+D5 150
+B2 600
+F3 600
+A3 600
+150
+F4 150
+F5 150
+150
+E4 150
+E5 150
+150
+D#4 150
+D#5 150
+150
+E4 150
+E5 150
+E2 600
+G#3 600
+150
+B3 150
+B4 150
+150
+D4 150
+D5 150
+150
+C4 150
+C5 150
+150
+E3 150
+E4 150
+D3 600
+G#3 600
+A2 600
+B3 600
+B4 600
+150
+G3 150
+G4 150
+150
+F3 150
+F4 150
+150
+E3 300
+E4 300
+150
+C3 150
+A2 150
+A3 150
+A4 150
+600
+A3 150
+C4 150
+A4 150
+A5 300
+150
+A6 150
+150
+E4 150
+C5 150
+G#6 150
+G#5 150
+150
+G5 150
+G6 150
+150
+D4 150
+B4 150
+F#5 150
+F#6 150
+150
+F5 150
+F6 150
+150
+C4 150
+A4 150
+E5 150
+E6 150
+150
+D#5 150
+D#6 150
+150
+E3 150
+G#3 150
+E4 150
+F5 150
+F6 150
+150
+E6 150
+E5 150
+150
+B3 150
+G4 150
+D#6 150
+D#5 150
+150
+F5 150
+F6 150
+150
+A3 150
+F4 150
+E6 150
+E5 300
+150
+B5 150
+150
+G#3 150
+E4 150
+G#5 150
+B4 300
+150
+E5 150
+150
+A3 150
+C4 150
+A4 150
+A5 300
+150
+A6 150
+150
+E4 150
+C5 150
+G#6 150
+G#5 150
+150
+G5 150
+G6 150
+150
+D4 150
+B4 150
+F#5 150
+F#6 150
+150
+F5 150
+F6 150
+150
+C4 150
+A4 150
+E5 150
+E6 150
+150
+D#5 150
+D#6 150
+150
+A3 150
+C4 150
+F4 150
+F5 150
+F6 150
+150
+E6 150
+E5 150
+150
+D#6 150
+D#5 150
+150
+F5 150
+F6 150
+150
+E3 150
+G#3 150
+E4 150
+E6 150
+E5 150
+300
+E5 150
+300
+A3 150
+C4 150
+A4 150
+A5 300
+150
+A6 150
+150
+E4 150
+C5 150
+G#6 150
+G#5 150
+150
+G5 150
+G6 150
+150
+D4 150
+B4 150
+F#5 150
+F#6 150
+150
+F5 150
+F6 150
+150
+C4 150
+A4 150
+E5 150
+E6 150
+150
+D#5 150
+D#6 150
+150
+E3 150
+G#3 150
+E4 150
+F5 150
+F6 150
+150
+E6 150
+E5 150
+150
+B3 150
+G4 150
+D#6 150
+D#5 150
+150
+F5 150
+F6 150
+150
+A3 150
+F4 150
+E6 150
+E5 300
+150
+B5 150
+150
+G#3 150
+E4 150
+G#5 150
+B4 300
+150
+E5 150
+150
+A3 150
+C4 150
+A4 150
+A5 300
+150
+A6 150
+150
+E4 150
+C5 150
+G#6 150
+G#5 150
+150
+G5 150
+G6 150
+150
+D4 150
+B4 150
+F#5 150
+F#6 150
+150
+F5 150
+F6 150
+150
+C4 150
+A4 150
+E5 150
+E6 150
+150
+D#5 150
+D#6 150
+150
+A3 150
+C4 150
+F4 150
+F5 150
+F6 150
+150
+E6 150
+E5 150
+150
+D#6 150
+D#5 150
+150
+F5 150
+F6 150
+150
+E3 150
+G#3 150
+E4 150
+E6 150
+E5 150
+300
+E5 150
+300
+A3 150
+C#4 150
+A4 150
+A5 300
+150
+A6 150
+150
+D4 150
+A#4 150
+G#6 150
+G#5 150
+150
+G5 150
+G6 150
+150
+C#4 150
+A4 150
+F#5 150
+F#6 150
+150
+F5 150
+F6 150
+150
+A#3 150
+G4 150
+E5 150
+E6 150
+150
+D5 150
+D6 150
+150
+A3 150
+F4 150
+C#6 150
+C#5 300
+150
+E6 150
+150
+G3 150
+E4 150
+A5 150
+C#5 300
+150
+C#6 150
+150
+F3 150
+D4 150
+D6 150
+D5 300
+150
+A5 150
+150
+D3 150
+F4 150
+F5 150
+A4 300
+150
+D5 150
+150
+G3 150
+B3 150
+G4 150
+G5 300
+150
+G6 150
+150
+C4 150
+G#4 150
+F#6 150
+F#5 150
+150
+F5 150
+F6 150
+150
+B3 150
+G4 150
+E5 150
+E6 150
+150
+D#5 150
+D#6 150
+150
+G#3 150
+F4 150
+D5 150
+D6 150
+150
+C5 150
+C6 150
+150
+G3 150
+E4 150
+B5 150
+B4 300
+150
+D6 150
+150
+F3 150
+D4 150
+G5 150
+B4 300
+150
+B5 150
+150
+E3 150
+C4 150
+C6 150
+C5 300
+150
+G5 150
+150
+C3 150
+E4 150
+E5 150
+G4 300
+150
+C5 150
+150
+G#3 150
+D3 150
+B3 150
+F4 150
+F5 150
+75
+A6 150
+225
+E6 150
+E5 150
+150
+D#5 150
+D#6 150
+150
+D5 150
+150
+C#6 150
+C#5 150
+150
+C5 150
+C6 150
+150
+B4 150
+B5 150
+150
+A3 150
+C3 150
+E4 150
+E5 150
+75
+G6 150
+225
+D#6 150
+D#5 150
+150
+D5 150
+D6 150
+150
+C5 150
+150
+B5 150
+B4 150
+150
+A#4 150
+A#5 150
+150
+A4 150
+A5 150
+150
+A3 150
+F4 150
+150
+E5 150
+E4 150
+150
+D#4 150
+D#5 150
+150
+D4 150
+D5 150
+150
+G#3 150
+E4 150
+150
+C5 150
+C4 150
+150
+B3 150
+B4 150
+150
+A#3 150
+A#4 150
+150
+A3 150
+150
+F3 150
+F4 150
+150
+E3 150
+E4 150
+150
+D#3 150
+D#4 150
+150
+D3 150
+D4 150
+150
+C3 150
+C4 150
+150
+B2 150
+B3 150
+150
+A#2 150
+A#3 150
+150
+A2 150
+A3 150
+300
+F6 150
+A5 150
+150
+F5 150
+C6 150
+150
+E5 150
+A4 150
+150
+E4 150
+C5 150
+150
+C3 150
+C4 150
+100
+B2 152
+B3 152
+100
+A2 152
+A3 152
+102
+G#2 150
+G#3 150
+300
+D#6 150
+G#5 150
+150
+D#5 150
+B5 150
+150
+E5 150
+G#4 150
+150
+E4 150
+B4 150
+150
+E2 150
+E3 150
+100
+F#2 152
+F#3 152
+100
+G#2 152
+G#3 152
+102
+A2 150
+A3 150
+300
+F6 150
+A5 150
+150
+F5 150
+C6 150
+150
+E5 150
+A4 150
+150
+E4 150
+C5 150
+150
+C3 150
+C4 150
+100
+B2 152
+B3 152
+100
+A2 152
+A3 152
+102
+G#2 150
+G#3 150
+300
+D#6 150
+G#5 150
+150
+D#5 150
+B5 150
+150
+E5 150
+G#4 150
+150
+E4 150
+B4 150
+225
+E2 150
+E3 150
+75
+F#2 150
+F#3 150
+75
+G#2 150
+G#3 150
+75
+A1 150
+A2 150
+A3 150
+300
+F6 150
+A5 150
+150
+F5 150
+C6 150
+150
+E5 150
+A4 150
+150
+E4 150
+C5 150
+150
+C3 150
+C4 150
+100
+B2 152
+B3 152
+100
+A2 152
+A3 152
+102
+G#2 150
+G#3 150
+5
+G#1 150
+295
+D#6 150
+G#5 150
+150
+D#5 150
+B5 150
+150
+E5 150
+G#4 150
+150
+E4 150
+B4 150
+150
+E2 150
+E3 150
+100
+F#2 152
+F#3 152
+100
+G#2 152
+G#3 152
+102
+A1 150
+A2 150
+A3 150
+300
+F6 150
+A5 150
+150
+F5 150
+C6 150
+150
+E5 150
+A4 150
+150
+E4 150
+C5 150
+150
+C3 150
+C4 150
+100
+B2 152
+B3 152
+100
+A2 152
+A3 152
+102
+G#2 150
+G#3 150
+5
+G#1 150
+295
+D#6 150
+G#5 150
+150
+D#5 150
+B5 150
+150
+E5 150
+G#4 150
+150
+E4 150
+B4 150
+225
+A2 150
+A3 150
+75
+B2 150
+B3 150
+75
+C3 150
+C4 150
+75
+C#2 150
+C#3 150
+C#4 150
+300
+A#6 150
+E6 150
+150
+A#5 150
+G6 150
+150
+A5 150
+E5 150
+150
+A4 150
+G5 150
+150
+A2 150
+A3 150
+100
+B2 152
+B3 152
+100
+C#3 152
+C#4 152
+102
+D2 150
+D3 150
+D4 150
+300
+E6 150
+A5 150
+150
+E5 150
+D6 150
+150
+F5 150
+A4 150
+150
+F4 150
+D5 150
+150
+E3 150
+E4 150
+100
+D3 152
+D4 152
+100
+C3 152
+C4 152
+102
+B1 150
+B2 150
+B3 150
+300
+G#6 150
+D6 150
+150
+G#5 150
+F6 150
+150
+G5 150
+D5 150
+150
+G4 150
+F5 150
+150
+G2 150
+G3 150
+100
+A2 152
+A3 152
+100
+B2 152
+B3 152
+102
+C2 150
+C3 150
+C4 150
+300
+D#6 150
+G5 150
+150
+D#5 150
+C6 150
+150
+E5 150
+G4 150
+150
+E4 150
+C5 150
+150
+B2 150
+B3 150
+100
+C3 152
+C4 152
+100
+C#3 152
+C#4 152
+102
+D2 150
+D3 150
+D4 150
+300
+B6 150
+D6 150
+150
+B5 150
+F6 150
+150
+A#5 150
+D5 150
+150
+A#4 150
+F5 150
+150
+A#2 150
+A#3 150
+100
+C3 152
+C4 152
+100
+D3 152
+D4 152
+102
+E2 150
+E3 150
+E4 150
+300
+G#6 150
+B5 150
+150
+G#5 150
+D6 150
+150
+A5 150
+C5 150
+150
+A4 150
+E5 150
+150
+F3 150
+F4 150
+100
+E3 152
+E4 152
+100
+D#3 152
+D#4 152
+102
+D2 150
+D3 150
+D4 150
+300
+B2 150
+F6 150
+A5 150
+100
+C3 152
+50
+F5 152
+B5 152
+50
+D3 152
+102
+E3 150
+E2 150
+E5 150
+G#4 150
+150
+B4 150
+E4 150
+150
+D3 150
+D4 150
+100
+C3 152
+C4 152
+100
+B2 152
+B3 152
+102
+A1 150
+A2 150
+A3 150
+300
+E4 150
+C5 150
+C6 150
+E6 150
+150
+C6 150
+150
+C4 150
+A4 150
+E6 150
+A6 150
+150
+A5 150
+450
+A1 150
+C2 150
+E6 900
+C6 900
+150
+B1 150
+D2 150
+150
+C2 150
+E2 150
+150
+D2 150
+F2 150
+150
+E2 150
+G#2 150
+150
+F2 150
+A2 150
+150
+G#2 150
+B2 150
+D6 150
+B6 150
+150
+A2 150
+C3 150
+C6 150
+A6 150
+150
+B2 150
+D3 150
+B6 150
+G#6 150
+B5 150
+150
+C3 150
+E3 150
+A5 150
+F6 150
+A6 150
+150
+D3 150
+F3 150
+G#5 150
+E6 150
+G#6 150
+150
+E3 150
+G#3 150
+F5 150
+D6 150
+F6 150
+150
+F3 150
+A3 150
+E6 150
+C6 150
+E5 150
+150
+G#3 150
+B3 150
+D6 150
+B5 150
+D5 150
+150
+A3 150
+C4 150
+C6 150
+A5 150
+C5 150
+150
+B3 150
+D4 150
+B4 150
+B5 150
+G#5 150
+150
+C4 150
+A3 150
+C6 900
+A5 900
+C5 900
+150
+B3 150
+D4 150
+150
+C4 150
+E4 150
+150
+D4 150
+F4 150
+150
+D4 150
+F4 150
+150
+C4 150
+E4 150
+150
+B3 150
+D4 150
+D6 150
+B5 150
+D5 150
+150
+A3 150
+C4 150
+E6 150
+C6 150
+E5 150
+150
+B3 150
+D4 150
+D5 150
+B5 150
+D6 150
+150
+C4 150
+A3 150
+C6 150
+A5 150
+C5 150
+150
+B3 150
+G#3 150
+B5 150
+G#5 150
+B4 150
+150
+F3 150
+A3 150
+A4 150
+F5 150
+A5 150
+150
+E3 600
+G#3 600
+G#4 600
+E5 600
+G#5 600
+600
+A1 150
+A2 150
+E6 900
+C6 900
+150
+B1 150
+B2 150
+150
+C2 150
+C3 150
+150
+D2 150
+D3 150
+150
+E2 150
+E3 150
+150
+F2 150
+F3 150
+150
+G#2 150
+G#3 150
+D6 150
+B6 150
+150
+A2 150
+A3 150
+C6 150
+A6 150
+150
+B2 150
+B3 150
+B6 150
+G#6 150
+B5 150
+150
+C3 150
+C4 150
+A5 150
+F6 150
+A6 150
+150
+D3 150
+D4 150
+G#5 150
+E6 150
+G#6 150
+150
+E3 150
+E4 150
+F5 150
+D6 150
+F6 150
+150
+F3 150
+F4 150
+E6 150
+C6 150
+E5 150
+150
+G#3 150
+G#4 150
+D6 150
+B5 150
+D5 150
+150
+A3 150
+A4 150
+C6 150
+A5 150
+C5 150
+150
+B3 150
+B4 150
+B5 150
+G#5 150
+150
+A4 150
+A3 150
+C6 900
+A5 900
+C5 900
+150
+G#3 150
+G#4 150
+150
+F3 150
+F4 150
+150
+E3 150
+E4 150
+150
+F3 150
+F4 150
+150
+E3 150
+E4 150
+150
+D3 150
+D4 150
+D6 150
+B5 150
+D5 150
+150
+C4 150
+C3 150
+E6 150
+C6 150
+E5 150
+150
+B3 150
+B2 150
+D5 150
+D6 150
+150
+A2 150
+A3 150
+C6 150
+C5 150
+150
+G#2 150
+G#3 150
+B5 150
+B4 150
+150
+F4 150
+F3 150
+A4 150
+A5 150
+150
+E4 600
+E3 600
+G#4 600
+G#5 600
+600
+A#4 150
+A#3 150
+E5 600
+C#6 750
+C#5 750
+150
+A4 150
+A3 150
+150
+G3 150
+G4 150
+150
+E3 150
+E4 150
+150
+C#3 150
+C#4 150
+A5 150
+150
+A#2 150
+A#3 150
+150
+A3 150
+D6 150
+B5 150
+D5 150
+A2 300
+150
+G3 150
+E5 150
+C#6 150
+E6 150
+150
+D3 150
+F3 150
+F6 150
+D6 150
+F5 150
+150
+C#3 150
+E3 150
+G5 150
+E6 150
+G6 150
+150
+B2 150
+D3 150
+A5 150
+F6 150
+A6 150
+150
+A2 150
+C#3 150
+B5 150
+G6 150
+B6 150
+150
+G2 150
+B2 150
+C#6 150
+A6 150
+150
+F2 150
+A2 150
+D6 150
+B6 150
+150
+E2 150
+G2 150
+E6 150
+C#6 150
+150
+D2 150
+F2 150
+D6 150
+F6 150
+150
+G#3 150
+G#4 150
+D5 600
+B5 750
+B4 750
+150
+G3 150
+G4 150
+150
+F3 150
+F4 150
+150
+D3 150
+D4 150
+150
+B2 150
+B3 150
+G5 150
+150
+G#2 150
+G#3 150
+150
+G3 150
+C6 150
+A5 150
+C5 150
+G2 300
+150
+F3 150
+D5 150
+B5 150
+D6 150
+150
+C3 150
+E3 150
+E6 150
+C6 150
+E5 150
+150
+B2 150
+D3 150
+F5 150
+D6 150
+F6 150
+150
+A2 150
+C3 150
+G5 150
+E6 150
+G6 150
+150
+G2 150
+B2 150
+A5 150
+F6 150
+A6 150
+150
+A2 150
+F2 150
+B6 150
+G6 150
+B5 150
+150
+G2 150
+E2 150
+C6 150
+A6 150
+150
+F2 150
+D2 150
+D6 150
+B6 150
+150
+E2 150
+C2 150
+C6 150
+E6 150
+150
+D3 150
+B2 150
+G#2 150
+D2 150
+G#6 150
+B6 150
+F6 150
+150
+F3 150
+F2 150
+D6 150
+150
+G#2 150
+G#3 150
+B5 150
+B6 150
+150
+B2 150
+B3 150
+G#5 150
+G#6 150
+150
+D3 150
+D4 150
+B3 150
+G#3 150
+B5 150
+G#5 150
+F5 150
+F6 150
+150
+D#4 150
+D#3 150
+D#5 150
+D#6 150
+150
+E3 150
+E4 150
+E5 150
+E6 150
+150
+F4 150
+F3 150
+D5 150
+D6 150
+150
+F#2 150
+A2 150
+A1 150
+D#2 150
+D#6 150
+F#6 150
+C6 150
+150
+C2 150
+C3 150
+A5 150
+A6 150
+150
+D#2 150
+D#3 150
+F#5 150
+F#6 150
+150
+F#2 150
+F#3 150
+D#5 150
+D#6 150
+150
+A2 150
+A3 150
+F#3 150
+D#3 150
+F#5 150
+D#5 150
+C5 150
+C6 150
+150
+A#3 150
+A#2 150
+A#4 150
+A#5 150
+150
+B2 150
+B3 150
+B4 150
+B5 150
+150
+C4 150
+C3 150
+A4 150
+A5 150
+150
+D3 150
+A3 150
+B3 150
+A4 150
+B4 150
+F4 150
+F5 150
+150
+D#3 150
+D#4 150
+D#5 150
+150
+E3 150
+E4 150
+E5 150
+150
+F3 150
+D4 150
+D5 150
+150
+C#4 150
+C#5 150
+E3 300
+G#3 300
+E4 300
+150
+B3 150
+B4 150
+150
+C4 150
+C5 150
+D4 300
+G#3 300
+E3 300
+150
+B3 150
+B4 150
+150
+D3 600
+F3 600
+D4 600
+F4 600
+A2 900
+A3 900
+A4 900
+600
+C3 300
+E3 300
+C4 300
+E4 300
+600
+E4 150
+E6 150
+100
+F4 152
+F6 152
+100
+E4 152
+E6 152
+102
+C4 600
+C6 600
+300
+A2 150
+E3 150
+C5 150
+E5 150
+300
+A3 150
+A5 150
+100
+B3 152
+B5 152
+100
+A3 152
+A5 152
+102
+B3 152
+B5 152
+102
+C4 152
+C6 152
+100
+B3 152
+B5 152
+102
+G#3 152
+G#5 152
+102
+A3 152
+A5 152
+100
+G#3 152
+G#5 152
+102
+E3 152
+E5 152
+102
+F3 152
+F5 152
+100
+E3 152
+E5 152
+102
+A2 150
+G#3 150
+B4 150
+E4 150
+D4 150
+300
+E4 150
+E6 150
+100
+F4 152
+F6 152
+100
+E4 152
+E6 152
+102
+C4 600
+C6 600
+300
+A2 150
+E3 150
+C5 150
+E5 150
+300
+A3 150
+C4 150
+E4 302
+100
+B3 152
+D4 152
+100
+A3 152
+C4 152
+102
+G#3 152
+B3 152
+E4 303
+102
+A3 152
+C4 152
+100
+G3 152
+B3 152
+102
+F#3 152
+A4 152
+D#4 303
+102
+G3 152
+B4 152
+100
+F3 152
+A4 152
+102
+E3 152
+G#4 152
+E4 303
+102
+F3 152
+A4 152
+100
+E3 152
+G#4 152
+102
+E2 150
+300
+E4 150
+E6 150
+100
+F4 152
+F6 152
+100
+E4 152
+E6 152
+102
+C4 600
+C6 600
+300
+A2 150
+E3 150
+C5 150
+E5 150
+300
+A3 150
+A5 150
+100
+B3 152
+B5 152
+100
+A3 152
+A5 152
+102
+B3 152
+B5 152
+102
+C4 152
+C6 152
+100
+B3 152
+B5 152
+102
+G#3 152
+G#5 152
+102
+A3 152
+A5 152
+100
+G#3 152
+G#5 152
+102
+E3 152
+E5 152
+102
+F3 152
+F5 152
+100
+E3 152
+E5 152
+102
+A2 150
+G#3 150
+B4 150
+E4 150
+D4 150
+300
+E4 150
+E6 150
+100
+F4 152
+F6 152
+100
+E4 152
+E6 152
+102
+C4 600
+C6 600
+300
+A2 150
+E3 150
+C5 150
+E5 150
+300
+A3 150
+C4 150
+E4 302
+100
+B3 152
+D4 152
+100
+A3 152
+C4 152
+102
+G#3 152
+B3 152
+E4 303
+102
+A3 152
+C4 152
+100
+G3 152
+B3 152
+102
+F#3 152
+A4 152
+D#4 303
+102
+G3 152
+B4 152
+100
+F3 152
+A4 152
+102
+E3 152
+G#4 152
+E4 303
+102
+F3 152
+A4 152
+100
+E3 152
+G#4 152
+102
+E2 150
+300
+E4 150
+E6 150
+100
+F4 152
+F6 152
+100
+E4 152
+E6 152
+102
+C#4 600
+C#6 600
+300
+G3 150
+A2 150
+A#3 150
+C#5 150
+E5 150
+300
+A3 150
+A5 150
+100
+A#3 152
+A#5 152
+100
+A3 152
+A5 152
+102
+D4 152
+D6 152
+102
+E4 152
+E6 152
+100
+D4 152
+D6 152
+102
+C#4 302
+102
+E4 150
+A#4 150
+98
+A4 102
+203
+D4 148
+G4 148
+98
+F4 100
+25
+F3 300
+38
+A3 38
+38
+D4 150
+300
+D4 150
+D6 150
+100
+E4 152
+E6 152
+100
+D4 152
+D6 152
+102
+B3 600
+B5 600
+300
+F3 150
+G2 150
+G#3 150
+B4 150
+D5 150
+300
+G3 150
+G5 150
+100
+A3 152
+A5 152
+100
+G3 152
+G5 152
+102
+C4 152
+C6 152
+102
+D4 152
+D6 152
+100
+C4 152
+C6 152
+102
+B3 302
+102
+D4 150
+A4 150
+98
+G4 102
+203
+C4 148
+F4 148
+98
+E4 100
+25
+E3 300
+38
+G3 38
+38
+C4 150
+300
+D4 150
+D6 150
+100
+E4 152
+E6 152
+100
+D4 152
+D6 152
+102
+F4 600
+F6 600
+300
+D3 150
+B3 150
+F5 150
+G#5 150
+600
+C4 150
+C6 150
+100
+D4 152
+D6 152
+100
+C4 152
+C6 152
+102
+E4 600
+E6 600
+300
+C3 150
+A3 150
+E5 150
+A5 150
+600
+D3 300
+300
+F4 300
+D4 300
+300
+E3 300
+300
+G#4 300
+E4 300
+300
+E4 300
+A4 300
+A3 300
+300
+D2 150
+A2 150
+300
+A1 150
+A2 150
+C6 150
+E6 150
+600
+E3 150
+A2 150
+E4 150
+A3 150
+C4 150
+300
+C3 150
+E3 150
+150
+E4 150
+150
+E3 150
+B2 150
+150
+E4 150
+D4 150
+150
+E3 150
+A2 150
+150
+E4 150
+C4 150
+150
+E3 150
+G#2 150
+150
+E4 150
+B3 150
+150
+E3 150
+E2 150
+150
+B4 150
+B3 150
+E4 150
+150
+F#2 150
+E3 150
+150
+E4 150
+A3 150
+150
+E3 150
+G#2 150
+150
+E4 150
+B3 150
+150
+E3 150
+A2 150
+E4 150
+A3 150
+C4 150
+300
+E3 150
+C3 150
+150
+E4 150
+150
+E3 150
+B2 150
+150
+E4 150
+D4 150
+150
+E3 150
+A2 150
+150
+E4 150
+C4 150
+150
+E3 150
+G#2 150
+150
+E4 150
+B3 150
+150
+D#3 150
+F2 150
+150
+A4 150
+B3 150
+D#4 150
+150
+E3 150
+E2 150
+150
+G#4 150
+E4 150
+B3 150
+150
+G#3 150
+E3 150
+150
+E4 150
+150
+A3 150
+A2 150
+A4 150
+E5 150
+E4 150
+C5 150
+300
+C4 150
+C3 150
+150
+E4 150
+E5 150
+150
+B3 150
+B2 150
+150
+D5 150
+E4 150
+5
+E5 150
+145
+A3 150
+A2 150
+150
+E4 150
+E5 150
+C5 150
+150
+G#3 150
+G#2 150
+150
+E4 150
+E5 150
+B4 150
+150
+E3 150
+E2 150
+150
+B5 150
+B4 150
+150
+F#3 150
+F#2 150
+150
+E4 150
+E5 150
+A4 150
+150
+G#3 150
+G#2 150
+150
+E4 150
+E5 150
+B4 150
+150
+A3 150
+A2 150
+A4 150
+E5 150
+E4 150
+C5 150
+300
+C4 150
+C3 150
+150
+E5 150
+E4 150
+150
+B3 150
+B2 150
+150
+D5 150
+E5 150
+E4 150
+150
+A3 150
+A2 150
+150
+E4 150
+E5 150
+C5 150
+150
+G#3 150
+G#2 150
+150
+E4 150
+E5 150
+B4 150
+150
+F3 150
+F2 150
+150
+A5 150
+A4 150
+D#5 150
+150
+E3 150
+E2 150
+150
+G#5 150
+E5 150
+G#4 150
+150
+G#3 150
+E4 150
+B3 150
+150
+E5 150
+G#4 150
+B4 150
+150
+A3 150
+A2 150
+C#5 150
+A4 150
+E5 150
+E4 150
+300
+B3 150
+B2 150
+150
+A4 150
+D5 150
+E4 150
+E5 150
+150
+C#3 150
+C#4 150
+150
+E5 150
+A4 150
+E4 150
+150
+A3 150
+A2 150
+150
+E4 150
+E5 150
+C#5 150
+150
+D4 150
+D3 150
+150
+D5 300
+D6 300
+F5 300
+150
+C#4 300
+A#4 300
+150
+E5 300
+E6 300
+G5 300
+150
+A4 300
+D4 300
+150
+F5 300
+F6 300
+A5 300
+150
+A4 300
+F4 300
+150
+D5 150
+D6 150
+F5 150
+150
+G3 150
+G2 150
+G4 150
+D5 150
+D4 150
+B4 150
+300
+A3 150
+A2 150
+150
+D5 150
+G4 150
+C5 150
+D4 150
+150
+B3 150
+B2 150
+150
+G4 150
+D5 150
+D4 150
+150
+G3 150
+G2 150
+150
+D4 150
+D5 150
+B4 150
+150
+C4 150
+C3 150
+150
+E5 300
+E6 300
+C6 300
+150
+G4 300
+D4 300
+150
+F6 300
+F5 300
+C6 300
+150
+G4 300
+E4 300
+150
+G6 300
+C6 300
+G5 300
+150
+G4 300
+C4 300
+150
+E6 150
+E5 150
+C6 150
+150
+D4 150
+D3 150
+B5 150
+G#5 150
+F6 150
+F5 150
+300
+F4 300
+G#4 300
+B4 300
+150
+D6 300
+G#5 300
+B5 300
+D5 300
+150
+E4 300
+G#4 300
+B4 300
+150
+E6 300
+B5 300
+E5 300
+G#5 300
+150
+D4 300
+G#4 300
+B4 300
+150
+F6 150
+G#5 150
+F5 150
+B5 150
+150
+C4 300
+C5 300
+A4 300
+150
+E5 300
+E6 300
+A5 300
+150
+F4 300
+G#4 300
+B3 300
+150
+D5 300
+D6 300
+G#5 300
+F5 300
+150
+A3 300
+A4 300
+E4 300
+150
+A5 300
+C6 300
+E5 300
+C5 300
+150
+C#4 300
+E4 300
+G3 300
+150
+C#5 150
+C#6 150
+E5 150
+A#5 150
+150
+F3 300
+F4 300
+D4 300
+150
+D6 300
+D5 300
+A#5 300
+F5 300
+150
+C4 300
+D#4 300
+D#3 300
+A3 300
+150
+A5 300
+A6 300
+F6 300
+C6 300
+150
+E4 300
+E3 300
+C4 300
+A3 300
+150
+E6 300
+A6 300
+C6 300
+A5 300
+150
+E4 300
+B3 300
+G#3 300
+E3 300
+150
+G#5 150
+G#6 150
+B5 150
+E6 150
+150
+A2 600
+E3 600
+A3 600
+E6 600
+C6 600
+A5 600
+A6 600
+600
+E4 150
+A4 150
+C4 150
+C5 150
+E5 150
+A5 150
+600
+A3 150
+C6 150
+150
+E4 150
+A5 150
+150
+E5 75
+E3 150
+150
+E4 150
+C5 150
+150
+C4 150
+A4 150
+150
+E4 150
+E5 150
+150
+A3 150
+C5 150
+150
+E4 150
+150
+G#3 150
+B5 150
+150
+E4 150
+G#5 150
+150
+E5 75
+E3 150
+150
+E4 150
+D6 150
+150
+G#3 150
+B5 150
+150
+E4 150
+E5 150
+150
+B3 150
+G#5 150
+150
+E4 150
+150
+A3 150
+C6 150
+150
+E4 150
+A5 150
+150
+E5 75
+E3 150
+150
+E4 150
+C5 150
+150
+C4 150
+A4 150
+150
+E4 150
+E5 150
+150
+A3 150
+C5 150
+150
+E4 150
+150
+G#3 150
+B5 150
+150
+E4 150
+G#5 150
+150
+E5 75
+E3 150
+150
+E4 150
+E5 150
+150
+G#3 150
+B4 150
+150
+B3 150
+G#4 150
+150
+E4 300
+262
+E6 300
+38
+A3 150
+C6 150
+150
+E4 150
+A6 150
+150
+E3 150
+E6 150
+150
+E4 150
+C6 150
+150
+C4 150
+A5 150
+150
+E4 150
+E6 150
+150
+A3 150
+C6 150
+150
+E4 150
+75
+B5 450
+38
+E6 300
+38
+G#3 150
+B6 150
+150
+E4 150
+G#6 150
+150
+E3 150
+E6 150
+150
+E4 150
+D6 150
+150
+G#3 150
+B6 150
+150
+E4 150
+E6 150
+150
+B3 150
+G#6 150
+150
+E4 150
+112
+E6 300
+38
+A3 150
+C6 150
+150
+E4 150
+A6 150
+150
+E3 150
+E6 150
+150
+E4 150
+C6 150
+150
+C4 150
+A5 150
+150
+E4 150
+E6 150
+150
+A3 150
+C6 150
+150
+E4 150
+75
+B5 450
+38
+E6 300
+38
+G#3 150
+B6 150
+150
+E4 150
+G#6 150
+150
+E3 150
+E6 150
+150
+E4 150
+B5 150
+150
+B3 150
+G#5 150
+150
+G#4 150
+B4 150
+150
+E5 150
+E4 300
+225
+E5 450
+75
+C#4 150
+E6 150
+150
+A4 150
+C#6 150
+150
+A3 150
+A5 150
+150
+A4 150
+E5 150
+150
+C#5 150
+150
+A4 150
+150
+G4 150
+150
+E4 150
+150
+F4 150
+D3 300
+A3 300
+150
+D4 150
+150
+D6 150
+150
+A5 150
+150
+F5 150
+150
+D5 150
+150
+F4 150
+300
+B3 150
+D6 150
+150
+G4 150
+B5 150
+150
+G5 75
+G3 150
+150
+G4 150
+F5 150
+150
+D5 150
+150
+B4 150
+150
+F4 150
+150
+D4 150
+150
+E4 150
+C3 300
+G3 300
+150
+C4 150
+150
+C6 150
+150
+G5 150
+150
+E5 150
+150
+C5 150
+150
+E4 150
+150
+C4 150
+150
+B5 150
+F4 300
+G#3 300
+D4 300
+150
+A5 150
+F6 150
+150
+G#5 150
+150
+F5 150
+D6 150
+150
+E5 150
+150
+D5 150
+B5 150
+150
+C5 150
+150
+B4 150
+G#5 150
+150
+A4 150
+E4 300
+C4 300
+150
+G4 150
+E5 150
+150
+F4 150
+150
+E4 150
+C5 150
+150
+D4 150
+150
+C4 150
+A4 150
+150
+B3 150
+150
+A3 150
+E4 150
+150
+F4 150
+150
+D3 150
+150
+A5 150
+B4 150
+150
+F5 150
+D5 150
+150
+G#4 150
+150
+E3 150
+150
+B5 150
+B4 150
+150
+G#5 150
+D5 150
+150
+A5 150
+C5 150
+150
+A4 150
+E4 150
+150
+C4 150
+150
+A3 150
+150
+A2 300
+600
+E5 150
+A6 1817
+A4 2423
+A5 2423
+100
+F5 152
+100
+E5 152
+102
+F5 152
+102
+E5 152
+100
+F5 152
+102
+E5 152
+102
+F5 152
+100
+E5 152
+102
+F5 152
+102
+E5 152
+100
+F5 152
+102
+E5 152
+102
+F5 152
+100
+E5 152
+102
+F5 152
+102
+E5 152
+100
+F5 152
+102
+E5 152
+E6 303
+102
+F5 152
+100
+E5 152
+102
+F5 152
+C6 303
+102
+E5 152
+100
+F5 152
+102
+E5 152
+B6 303
+A4 2425
+D5 2425
+B5 2425
+102
+F5 152
+100
+E5 152
+102
+F5 152
+A6 303
+102
+E5 152
+100
+F5 152
+102
+E5 152
+G#6 303
+102
+F5 152
+100
+E5 152
+102
+F5 152
+F#6 303
+102
+E5 152
+100
+F5 152
+102
+E5 152
+E6 303
+102
+F5 152
+100
+E5 152
+102
+F5 152
+F#6 303
+102
+E5 152
+100
+F5 152
+102
+E5 152
+G#6 303
+102
+F5 152
+100
+E5 152
+102
+F5 152
+E6 303
+102
+E5 152
+100
+F5 152
+102
+E5 152
+C5 2425
+A4 2425
+E6 2425
+102
+F5 152
+100
+E5 152
+102
+F5 152
+102
+E5 152
+100
+F5 152
+102
+E5 152
+102
+F5 152
+100
+E5 152
+102
+F5 152
+102
+E5 152
+100
+F5 152
+102
+A6 50
+E5 152
+102
+F5 152
+100
+E5 152
+102
+F5 152
+B6 303
+102
+E5 152
+100
+F5 152
+102
+E5 152
+C6 303
+102
+F5 152
+100
+E5 152
+102
+F5 152
+D6 303
+102
+E5 152
+100
+F5 152
+102
+E5 152
+D#6 909
+B4 2425
+A4 2425
+D6 2425
+G#6 2425
+102
+F5 152
+100
+E5 152
+102
+F5 152
+102
+E5 152
+100
+F5 152
+102
+E5 152
+102
+F5 152
+100
+E5 152
+102
+F5 152
+E6 303
+102
+E5 152
+100
+F5 152
+102
+E5 152
+E6 1212
+102
+F5 152
+100
+E5 152
+102
+F5 152
+102
+E5 152
+100
+F5 152
+102
+E5 152
+102
+F5 152
+100
+E5 152
+102
+F5 152
+102
+E5 152
+100
+F5 152
+102
+E5 152
+A6 1819
+A4 2425
+A5 2425
+102
+F5 152
+100
+E5 152
+102
+F5 152
+102
+E5 152
+100
+F5 152
+102
+E5 152
+102
+F5 152
+100
+E5 152
+102
+F5 152
+102
+E5 152
+100
+F5 152
+102
+E5 152
+102
+F5 152
+100
+E5 152
+102
+F5 152
+102
+E5 152
+100
+F5 152
+102
+E5 152
+E6 303
+102
+F5 152
+100
+E5 152
+102
+F5 152
+C6 303
+102
+E5 152
+100
+F5 152
+102
+E5 152
+B6 303
+A4 2425
+D5 2425
+B5 2425
+102
+F5 152
+100
+E5 152
+102
+F5 152
+A6 303
+102
+E5 152
+100
+F5 152
+102
+E5 152
+G#6 303
+102
+F5 152
+100
+E5 152
+102
+F5 152
+F#6 303
+102
+E5 152
+100
+F5 152
+102
+E5 152
+E6 303
+102
+F5 152
+100
+E5 152
+102
+F5 152
+F#6 303
+102
+E5 152
+100
+F5 152
+102
+E5 152
+G#6 303
+102
+F5 152
+100
+E5 152
+102
+F5 152
+E6 303
+102
+E5 152
+100
+F5 152
+102
+E5 152
+A4 2425
+C5 2425
+E6 2425
+102
+F5 152
+100
+E5 152
+102
+F5 152
+102
+E5 152
+100
+F5 152
+102
+E5 152
+102
+F5 152
+100
+E5 152
+102
+F5 152
+102
+E5 152
+100
+F5 152
+102
+A6 50
+E5 152
+102
+F5 152
+100
+E5 152
+102
+F5 152
+B6 303
+102
+E5 152
+100
+F5 152
+102
+E5 152
+C6 303
+102
+F5 152
+100
+E5 152
+102
+F5 152
+D6 303
+102
+E5 152
+100
+F5 152
+102
+E5 152
+D#6 909
+B4 2425
+A4 2425
+D6 2425
+G#6 2425
+102
+F5 152
+100
+E5 152
+102
+F5 152
+102
+E5 152
+100
+F5 152
+102
+E5 152
+102
+F5 152
+100
+E5 152
+102
+F5 152
+E6 303
+102
+E5 152
+100
+F5 152
+102
+E5 152
+E6 1212
+102
+F5 152
+100
+E5 152
+102
+F5 152
+102
+E5 152
+100
+F5 152
+102
+E5 152
+102
+F5 152
+100
+E5 152
+102
+F5 152
+102
+E5 152
+100
+F5 152
+102
+E5 150
+A4 1200
+A6 1500
+G5 2400
+150
+F5 150
+150
+E5 150
+150
+F5 150
+150
+E5 150
+150
+F5 150
+150
+E5 150
+150
+F5 150
+150
+E5 600
+300
+E6 300
+300
+C#6 300
+300
+A6 300
+300
+G6 300
+300
+E6 300
+300
+C#6 300
+300
+A5 300
+300
+G5 300
+300
+F5 300
+300
+E5 300
+F6 300
+D6 300
+A5 300
+300
+D5 300
+300
+F5 150
+B4 1200
+G6 1500
+G5 2400
+150
+E5 150
+150
+F5 150
+150
+E5 150
+150
+F5 150
+150
+E5 150
+150
+F5 150
+150
+E5 150
+150
+F5 600
+300
+D6 300
+300
+B6 300
+300
+G6 300
+300
+F6 300
+300
+D6 300
+300
+B5 300
+300
+G5 300
+300
+F5 300
+300
+E5 300
+300
+D5 300
+E6 300
+C6 300
+G5 300
+300
+C5 300
+300
+F5 150
+G#4 1200
+D5 1200
+F6 1500
+B5 1500
+150
+E5 150
+150
+F5 150
+150
+E5 150
+150
+F5 150
+150
+E5 150
+150
+F5 150
+150
+E5 150
+150
+F5 600
+300
+D6 300
+300
+B5 300
+300
+A5 300
+300
+G#5 300
+300
+E5 300
+300
+E6 300
+G#5 300
+D5 300
+300
+B4 300
+300
+E6 300
+A5 300
+C5 300
+300
+E5 300
+300
+E6 300
+C#6 300
+A5 300
+300
+G5 300
+300
+F6 300
+D6 300
+F5 300
+300
+D6 300
+300
+B5 300
+300
+A5 300
+300
+E5 300
+D6 300
+G#5 300
+300
+B6 300
+300
+G#6 300
+300
+E6 300
+225
+G#6 150
+75
+A6 1200
+C6 2402
+1200
+A5 300
+900
+E2 150
+100
+F#2 152
+100
+G#2 152
+102
+A2 605
+A1 605
+102
+E3 150
+200
+A3 50
+C4 152
+102
+E4 50
+100
+A4 152
+102
+C5 152
+C3 606
+C2 606
+102
+E5 50
+100
+A5 152
+102
+C6 152
+C4 303
+102
+E6 50
+100
+A6 152
+102
+E6 152
+D6 152
+B2 606
+B1 606
+102
+G#6 152
+202
+E6 50
+D6 152
+B3 303
+102
+G#5 152
+202
+E5 50
+C5 152
+A2 603
+A1 603
+102
+A4 152
+202
+E4 50
+A3 300
+C4 300
+300
+E4 150
+G#3 150
+B3 150
+100
+G#1 152
+100
+B1 152
+102
+E2 152
+G#5 606
+B5 606
+E6 606
+E5 606
+102
+G#2 152
+100
+B2 152
+102
+E3 152
+102
+G#3 152
+100
+B3 152
+102
+E4 152
+B5 606
+D6 606
+G6 606
+G5 606
+102
+G#4 152
+100
+B4 152
+102
+E5 152
+102
+B4 152
+100
+G#4 152
+102
+E4 152
+B5 606
+D6 606
+F6 606
+F5 606
+102
+B3 152
+100
+G#3 152
+102
+E3 152
+102
+B2 152
+100
+G#2 152
+102
+E2 152
+B5 303
+D6 303
+E6 303
+E5 303
+102
+B1 152
+100
+G#1 152
+102
+A1 605
+A2 605
+102
+E3 150
+200
+A3 50
+C4 152
+102
+E4 50
+100
+A4 152
+102
+C5 152
+C3 606
+C2 606
+102
+E5 50
+100
+A5 152
+102
+C6 152
+C4 303
+102
+E6 50
+100
+A6 152
+102
+E6 152
+D6 152
+B2 606
+B1 606
+102
+G#6 152
+202
+E6 50
+D6 152
+B3 303
+102
+G#5 152
+202
+E5 50
+C5 152
+A2 603
+A1 603
+102
+A4 152
+202
+E4 50
+A3 300
+C4 300
+300
+E3 150
+E2 150
+B2 150
+E4 150
+G#3 150
+150
+E3 150
+E5 150
+E4 150
+150
+F3 150
+F5 150
+F4 150
+150
+F#3 150
+F#5 150
+F#4 150
+150
+G3 150
+G5 150
+G4 150
+150
+G#3 150
+G#5 150
+G#4 150
+150
+A3 150
+A5 150
+A4 150
+150
+A#3 150
+A#5 150
+A#4 150
+150
+B3 150
+B5 150
+B4 150
+150
+C4 150
+C6 150
+C5 150
+150
+C#4 150
+C#6 150
+C#5 150
+150
+D4 150
+D6 150
+D5 150
+150
+D#4 150
+D#6 150
+D#5 150
+150
+E4 150
+E6 150
+E5 150
+150
+F4 150
+F6 150
+F5 150
+150
+E4 150
+E6 150
+E5 150
+150
+E2 150
+100
+F#2 152
+100
+G#2 152
+102
+A2 605
+A1 605
+102
+E3 150
+200
+A3 50
+C4 152
+102
+E4 50
+100
+A4 152
+102
+C5 152
+C3 606
+C2 606
+102
+E5 50
+100
+A5 152
+102
+C6 152
+C4 303
+102
+E6 50
+100
+A6 152
+102
+E6 152
+D6 152
+B2 606
+B1 606
+102
+G#6 152
+202
+E6 50
+D6 152
+B3 303
+102
+G#5 152
+202
+E5 50
+C5 152
+A2 603
+A1 603
+102
+A4 152
+202
+E4 50
+A3 300
+C4 300
+300
+E4 150
+G#3 150
+B3 150
+100
+G#1 152
+100
+B1 152
+102
+E2 152
+G#5 606
+B5 606
+E6 606
+E5 606
+102
+G#2 152
+100
+B2 152
+102
+E3 152
+102
+G#3 152
+100
+B3 152
+102
+E4 152
+B5 606
+D6 606
+G6 606
+G5 606
+102
+G#4 152
+100
+B4 152
+102
+E5 152
+102
+B4 152
+100
+G#4 152
+102
+E4 152
+B5 606
+D6 606
+F6 606
+F5 606
+102
+B3 152
+100
+G#3 152
+102
+E3 152
+102
+B2 152
+100
+G#2 152
+102
+E2 152
+B5 303
+D6 303
+E6 303
+E5 303
+102
+B1 152
+100
+G#1 152
+102
+A1 605
+A2 605
+102
+E3 150
+200
+A3 50
+C4 152
+102
+E4 50
+100
+A4 152
+102
+C5 152
+C3 606
+C2 606
+102
+E5 50
+100
+A5 152
+102
+C6 152
+C4 303
+102
+E6 50
+100
+A6 152
+102
+E6 152
+D6 152
+B2 606
+B1 606
+102
+G#6 152
+202
+E6 50
+D6 152
+B3 303
+102
+G#5 152
+202
+E5 50
+C5 152
+A2 603
+A1 603
+102
+A4 152
+202
+E4 50
+A3 300
+C4 300
+300
+E3 150
+E2 150
+B2 150
+E4 150
+G#3 150
+150
+E3 150
+E5 150
+E4 150
+150
+F3 150
+F5 150
+F4 150
+150
+F#3 150
+F#5 150
+F#4 150
+150
+G3 150
+G5 150
+G4 150
+150
+G#3 150
+G#5 150
+G#4 150
+150
+A3 150
+A5 150
+A4 150
+150
+A#3 150
+A#5 150
+A#4 150
+150
+B3 150
+B5 150
+B4 150
+150
+C4 150
+C6 150
+C5 150
+150
+C#4 150
+C#6 150
+C#5 150
+150
+D4 150
+D6 150
+D5 150
+150
+D#4 150
+D#6 150
+D#5 150
+150
+E4 150
+E6 150
+E5 150
+150
+F4 150
+F6 150
+F5 150
+150
+E4 150
+E6 150
+E5 150
+150
+A3 300
+C#3 300
+E3 300
+100
+C#4 150
+98
+E4 152
+102
+C#2 303
+102
+A4 50
+100
+C#5 152
+102
+G5 152
+A#3 303
+C#3 303
+G3 303
+102
+A#5 50
+100
+C#6 152
+102
+A#6 152
+G6 152
+A2 303
+102
+C#6 152
+100
+A#5 152
+102
+A6 152
+F6 152
+A3 303
+C#3 303
+F3 303
+102
+C#6 152
+202
+A5 50
+F5 152
+C#2 303
+102
+C#5 152
+100
+A4 152
+102
+G5 152
+E5 152
+G3 303
+C#3 303
+E3 303
+102
+A#4 152
+100
+A4 152
+102
+G4 152
+E4 152
+A2 303
+102
+A#3 152
+100
+A3 152
+102
+F3 150
+D2 150
+D4 150
+F4 150
+300
+E4 150
+G3 150
+A#3 150
+C#5 150
+G4 302
+100
+D5 152
+100
+E5 152
+102
+F4 152
+A3 152
+D4 152
+F5 152
+D5 303
+102
+G5 152
+100
+A5 152
+102
+E5 152
+G4 152
+A#4 152
+C#6 152
+G5 303
+102
+D6 152
+100
+E6 152
+102
+F5 152
+A4 152
+D5 152
+F6 152
+D6 303
+102
+G6 152
+100
+A6 152
+102
+E6 152
+A#5 152
+G5 152
+C#6 152
+G6 303
+102
+D6 152
+100
+E6 152
+102
+F6 150
+A5 150
+D6 150
+A6 150
+600
+G3 300
+B2 300
+D3 300
+100
+B3 150
+98
+D4 152
+102
+B1 303
+102
+G4 50
+100
+B4 152
+102
+F5 152
+G#3 303
+B2 303
+F3 303
+102
+G#5 50
+100
+B5 152
+102
+G#6 152
+F6 152
+G2 303
+102
+B5 152
+100
+G#5 152
+102
+G6 152
+E6 152
+G3 303
+B2 303
+E3 303
+102
+B5 152
+202
+G5 50
+E5 152
+B1 303
+102
+B4 152
+100
+G4 152
+102
+F5 152
+D5 152
+F3 303
+B2 303
+D3 303
+102
+G#4 152
+100
+G4 152
+102
+F4 152
+D4 152
+G2 303
+102
+G#3 152
+100
+G3 152
+102
+E3 150
+C2 150
+C4 150
+E4 150
+300
+D4 150
+F3 150
+G#3 150
+B4 150
+F4 302
+100
+C5 152
+100
+D5 152
+102
+E4 152
+G3 152
+C4 152
+E5 152
+C5 303
+102
+F5 152
+100
+G5 152
+102
+G#4 152
+D5 152
+F4 152
+B5 152
+F5 303
+102
+C6 152
+100
+D6 152
+102
+E5 152
+G4 152
+C5 152
+E6 152
+C6 303
+102
+F6 152
+100
+G6 152
+102
+D6 152
+G#5 152
+F5 152
+B6 152
+F6 303
+102
+C6 152
+100
+D6 152
+102
+E6 150
+G5 150
+C6 150
+G6 150
+300
+C3 150
+C4 150
+100
+D3 152
+D4 152
+100
+E3 152
+E4 152
+102
+F3 300
+F2 300
+F4 300
+300
+G#4 300
+D4 300
+B3 300
+F6 300
+F5 300
+300
+G#4 300
+D4 300
+B3 300
+B5 300
+B4 300
+300
+B3 150
+B1 302
+B2 302
+100
+C4 152
+100
+D4 152
+102
+D#3 300
+D#2 300
+D#4 300
+300
+F#4 300
+C4 300
+A3 300
+D#6 300
+D#5 300
+300
+F#4 300
+C4 300
+A3 300
+A5 300
+A4 300
+300
+A3 150
+A1 302
+A2 302
+100
+B3 152
+100
+C4 152
+102
+C#3 300
+C#2 300
+C#4 300
+300
+E4 300
+A#3 300
+G3 300
+C#6 300
+C#5 300
+300
+E4 300
+A#3 300
+G3 300
+G5 300
+G4 300
+300
+G3 150
+G1 302
+G2 302
+100
+G#3 152
+100
+A#3 152
+102
+B2 300
+B1 300
+B3 300
+300
+D4 300
+G#3 300
+F3 300
+B5 300
+B4 300
+300
+D4 300
+G#3 300
+F3 300
+F5 300
+F4 300
+300
+F3 150
+F1 302
+F2 302
+100
+G#3 152
+100
+A#3 152
+102
+B2 300
+B1 300
+B3 300
+300
+D4 300
+A3 300
+F3 300
+B5 300
+B4 300
+300
+D4 300
+A3 300
+F3 300
+F5 300
+F4 300
+300
+F3 150
+F1 302
+F2 302
+100
+A3 152
+100
+A#3 152
+102
+B2 300
+B1 300
+B3 300
+300
+D#4 300
+A3 300
+F3 300
+B5 300
+B4 300
+300
+D#4 300
+A3 300
+F3 300
+F5 300
+F4 300
+300
+A2 150
+A3 150
+100
+G2 152
+G3 152
+100
+F2 152
+F3 152
+102
+E2 300
+E3 300
+600
+A3 300
+B3 300
+E4 300
+E3 300
+E5 300
+A5 300
+B5 300
+B4 300
+600
+E3 300
+E2 300
+E4 300
+600
+G#3 300
+B3 300
+E4 300
+E3 300
+G#5 300
+B5 300
+E6 300
+E5 300
+600
+A1 300
+A2 300
+C2 300
+5
+E2 300
+95
+E3 150
+98
+A3 152
+102
+C4 152
+102
+E4 50
+50
+A3 152
+50
+A4 152
+102
+A3 152
+C5 152
+102
+E5 50
+50
+C4 152
+50
+A5 152
+102
+B3 152
+C6 152
+102
+E6 50
+50
+A3 152
+50
+A6 152
+102
+E6 152
+C6 152
+E4 303
+102
+A6 152
+202
+E6 50
+C6 152
+102
+A5 152
+50
+E2 152
+152
+E5 50
+E2 152
+C5 152
+102
+A4 152
+50
+G2 152
+152
+E4 50
+F2 152
+C4 152
+102
+A3 152
+50
+E2 152
+50
+E3 152
+102
+A1 302
+A2 302
+C#2 302
+5
+E2 302
+97
+E3 150
+98
+A3 152
+102
+C#4 152
+102
+E4 50
+50
+A3 152
+50
+A4 152
+102
+A3 152
+C#5 152
+102
+E5 50
+50
+C4 152
+50
+A5 152
+102
+A#3 152
+C#6 152
+102
+E6 50
+50
+A3 152
+50
+A6 152
+102
+E6 152
+C#6 152
+G4 303
+102
+A6 152
+202
+E6 50
+C#6 152
+102
+A5 152
+50
+A2 152
+152
+E5 50
+A2 152
+C#5 152
+102
+A4 152
+50
+C3 152
+152
+E4 50
+A#2 152
+C#4 152
+102
+A3 152
+50
+A2 152
+50
+E3 152
+102
+D2 302
+D3 302
+A2 302
+F2 302
+102
+F3 150
+98
+A3 152
+102
+D4 152
+102
+F4 50
+50
+A3 152
+50
+A4 152
+102
+A3 152
+D5 152
+102
+F5 50
+50
+C4 152
+50
+A5 152
+102
+A#3 152
+D6 152
+102
+F6 50
+50
+A3 152
+50
+A6 152
+102
+F6 152
+D6 152
+F4 303
+102
+A6 152
+202
+F6 50
+D6 152
+102
+A5 152
+50
+D2 152
+152
+F5 50
+D2 152
+D5 152
+102
+A4 152
+50
+C#2 152
+152
+F4 50
+D2 152
+D4 152
+102
+A3 152
+50
+E2 152
+152
+F3 50
+F2 600
+300
+G#3 300
+F4 300
+D4 300
+B5 300
+B4 300
+D5 300
+300
+G#2 600
+G#3 600
+300
+F4 300
+G#4 300
+B3 300
+D6 300
+D5 300
+F5 300
+300
+B2 600
+B3 600
+300
+G#4 300
+B4 300
+D4 300
+F6 300
+F5 300
+G#5 300
+300
+E2 600
+E3 600
+300
+B3 300
+E4 300
+G#3 300
+E6 300
+E5 300
+G#5 300
+300
+A1 300
+A2 300
+C2 300
+5
+E2 300
+95
+E3 150
+98
+A3 152
+102
+C4 152
+102
+E4 50
+50
+A3 152
+50
+A4 152
+102
+A3 152
+C5 152
+102
+E5 50
+50
+C4 152
+50
+A5 152
+102
+B3 152
+C6 152
+102
+E6 50
+50
+A3 152
+50
+A6 152
+102
+E6 152
+C6 152
+E4 303
+102
+A6 152
+202
+E6 50
+C6 152
+102
+A5 152
+50
+E2 152
+152
+E5 50
+E2 152
+C5 152
+102
+A4 152
+50
+G2 152
+152
+E4 50
+F2 152
+C4 152
+102
+A3 152
+50
+E2 152
+50
+E3 152
+102
+A1 302
+A2 302
+C#2 302
+5
+E2 302
+97
+E3 150
+98
+A3 152
+102
+C#4 152
+102
+E4 50
+50
+A3 152
+50
+A4 152
+102
+A3 152
+C#5 152
+102
+E5 50
+50
+C4 152
+50
+A5 152
+102
+A#3 152
+C#6 152
+102
+E6 50
+50
+A3 152
+50
+A6 152
+102
+E6 152
+C#6 152
+G4 303
+102
+A6 152
+202
+E6 50
+C#6 152
+102
+A5 152
+50
+A2 152
+152
+E5 50
+A2 152
+C#5 152
+102
+A4 152
+50
+C3 152
+152
+E4 50
+A#2 152
+C#4 152
+102
+A3 152
+50
+A2 152
+50
+E3 152
+102
+D2 302
+D3 302
+A2 302
+F2 302
+102
+F3 150
+98
+A3 152
+102
+D4 152
+102
+F4 50
+50
+A3 152
+50
+A4 152
+102
+A3 152
+D5 152
+102
+F5 50
+50
+C4 152
+50
+A5 152
+102
+A#3 152
+D6 152
+102
+F6 50
+50
+A3 152
+50
+A6 152
+102
+F6 152
+D6 152
+F4 303
+102
+A6 152
+202
+F6 50
+D6 152
+102
+A5 152
+50
+D2 152
+152
+F5 50
+D2 152
+D5 152
+102
+A4 152
+50
+C#2 152
+152
+F4 50
+D2 152
+D4 152
+102
+A3 152
+50
+E2 152
+152
+F3 50
+F2 600
+300
+D4 300
+F4 300
+G#3 300
+B5 300
+B4 300
+D5 300
+300
+G#2 600
+G#3 600
+300
+F4 300
+G#4 300
+B3 300
+D6 300
+D5 300
+F5 300
+300
+B2 600
+B3 600
+300
+G#4 300
+B4 300
+D4 300
+F6 300
+F5 300
+G#5 300
+300
+E2 600
+E3 600
+300
+B3 300
+E4 300
+G#3 300
+E6 300
+E5 300
+G#5 300
+300
+A1 1209
+100
+C#2 150
+C#3 150
+98
+E2 152
+E3 152
+102
+A2 152
+A3 152
+102
+C#3 152
+C#4 152
+100
+E3 152
+E4 152
+102
+A3 152
+A4 152
+102
+C#4 152
+C#5 152
+100
+E4 152
+E5 152
+102
+A4 152
+A5 152
+102
+C#5 152
+C#6 152
+100
+E5 152
+E6 152
+102
+A5 152
+A6 152
+102
+E5 152
+E6 152
+100
+C#5 152
+C#6 152
+102
+A4 152
+A5 152
+102
+E4 152
+E5 152
+100
+C#4 152
+C#5 152
+102
+A3 152
+A4 152
+102
+E3 152
+E4 152
+100
+C#3 152
+C#4 152
+102
+A2 152
+A3 152
+102
+E2 152
+E3 152
+100
+C#2 152
+C#3 152
+102
+A1 1208
+102
+C#2 150
+C#3 150
+98
+E2 152
+E3 152
+102
+A2 152
+A3 152
+102
+C#3 152
+C#4 152
+100
+E3 152
+E4 152
+102
+A3 152
+A4 152
+102
+C#4 152
+C#5 152
+100
+E4 152
+E5 152
+102
+A4 150
+A5 150
+75
+C#5 150
+C#6 150
+75
+E5 150
+E6 150
+75
+A5 150
+A6 150
+75
+C#6 150
+75
+A5 150
+A6 150
+75
+E5 150
+E6 150
+75
+C#5 150
+C#6 150
+75
+A4 150
+A5 150
+100
+E4 152
+E5 152
+100
+C#4 152
+C#5 152
+102
+A3 152
+A4 152
+102
+E3 152
+E4 152
+100
+C#3 152
+C#4 152
+102
+A2 152
+A3 152
+102
+E2 152
+E3 152
+100
+C#2 152
+C#3 152
+102
+A1 1211
+102
+C#2 150
+C#3 150
+98
+E2 152
+E3 152
+102
+A2 152
+A3 152
+102
+C#3 152
+C#4 152
+100
+E3 152
+E4 152
+102
+A3 152
+A4 152
+102
+C#4 152
+C#5 152
+100
+E4 152
+E5 152
+102
+A4 152
+A5 152
+102
+C#5 152
+C#6 152
+100
+E5 152
+E6 152
+102
+A5 150
+A6 150
+120
+C#6 150
+120
+F6 150
+120
+E6 150
+120
+C#6 148
+123
+A5 150
+A6 150
+100
+E5 152
+E6 152
+102
+C#5 152
+C#6 152
+100
+A4 152
+A5 152
+102
+E4 152
+E5 152
+102
+C#4 152
+C#5 152
+100
+A3 152
+A4 152
+102
+E3 152
+E4 152
+102
+C#3 152
+C#4 152
+100
+A2 152
+A3 152
+102
+E2 152
+E3 152
+102
+C#2 152
+C#3 152
+95
+A1 150
+A2 150
+75
+A#1 150
+A#2 150
+75
+A1 150
+A2 150
+75
+A#1 150
+A#2 150
+75
+A1 150
+A2 150
+75
+A#1 150
+A#2 150
+75
+A1 150
+A2 150
+75
+A#1 150
+A#2 150
+75
+A1 150
+A2 150
+75
+A#1 150
+A#2 150
+75
+A1 150
+A2 150
+75
+A#1 150
+A#2 150
+75
+A1 150
+A2 150
+75
+A#1 150
+A#2 150
+75
+A1 150
+A2 150
+75
+A#1 150
+A#2 150
+75
+A1 150
+A2 150
+75
+A#1 150
+A#2 150
+75
+B1 150
+B2 150
+75
+C2 150
+C3 150
+75
+C#2 150
+C#3 150
+75
+D2 150
+D3 150
+75
+D#2 150
+D#3 150
+75
+E2 150
+E3 150
+75
+F2 150
+F3 150
+75
+E2 150
+E3 150
+75
+D#2 150
+D#3 150
+75
+D2 150
+D3 150
+75
+C#2 150
+C#3 150
+75
+C2 150
+C3 150
+75
+B1 150
+B2 150
+75
+A#1 150
+A#2 150
+75
+A1 300
+A2 300
+600
+C#3 300
+E3 300
+A3 300
+A2 300
+C#5 300
+E5 300
+A5 300
+A4 300
+600
+C#4 300
+E4 300
+A4 300
+A3 300
+C#6 300
+E6 300
+A6 300
+A5 300
 /usr/share/fonts/Monospace.font
 1
 monospace
 /usr/share/fonts/TimesNewRoman.font
 1
 'Times New Roman', Times, serif
+/usr/share/help/help
+239
+[command] | bc
+
+Stdin:
+    command    input command
+
+cat <file>
+
+Arguments:
+    file       input file
+
+cd <path>
+
+Arguments:
+    path       destination path
+
+chmod <readperm> <writeperm> <folder>
+
+Arguments:
+    readperm   read permission 0 - 4
+    writeperm  write permission 0 - 4
+    folder     folder
+
+clear
+
+cp <file|folder> <folder>
+
+Arguments:
+    file       source file
+    folder     source folder
+    folder     destination folder
+
+curl [-L] [-O] [-f] <url>
+
+Flags:
+    -L         follow redirects
+    -O         save to file
+    -f         fail silently
+
+Arguments:
+    url        destination url
+
+date
+
+dmesg
+
+echo <message>
+
+Arguments:
+    message    message to write
+
+env
+
+fsck
+
+groups
+
+head [-n <lines>] [-c <chars>] <file>
+
+Flags:
+    -n <lines> line count
+    -c <chars> character count
+
+Arguments:
+    file       input file
+
+history
+
+hostname [-i]
+
+Flags:
+    -i         ip address
+
+id
+
+ls [-a] <folder>
+
+Flags:
+    -a         view hidden files/folders
+
+Arguments:
+    folder     input folder
+
+mkdir <folder>
+
+Arguments:
+    folder     folder to create
+
+mv <target> <folder>
+
+Arguments:
+    target     target file/folder
+    folder     destination folder
+
+nano <file>
+
+Arguments:
+    file       file to open
+
+powerwash
+
+printenv
+
+ps
+
+pwd
+
+read [-p <msg>] <var>
+
+Flags:
+    -p <msg>   message to display when getting input
+
+Arguments:
+    var        variable to save user input
+
+rm [-r] [-f] [--no-preserve-root] <folder>
+
+Flags:
+    -r         delete recursively
+    -f         force delete
+    -no-preserve-root do not preserve root directory
+
+Arguments:
+    folder     target folder
+
+sleep <time|times|timem|timems>
+
+Arguments:
+    time       sleep time in seconds
+    time(s)    sleep time in seconds
+    time(m)    sleep time in minutes
+    time(ms)   sleep time in milliseconds
+
+stat <folder>
+
+Arguments:
+    folder     target folder
+
+sudo [-s] <command>
+
+Flags:
+    -s         enter root user
+
+Arguments:
+    command    command to execute
+
+sync
+
+tac <file>
+
+Arguments:
+    file       input file
+
+tail [-n <lines>] [-c <chars>] <file>
+
+Flags:
+    -n <lines> line count
+    -c <chars> character count
+
+Arguments:
+    file       input file
+
+touch <file>
+
+Arguments:
+    file       file to create
+
+tree
+
+type <file>
+
+EOF
+
+Arguments:
+    file       file to type out
+
+Notes:
+    EOF        exit type mode
+
+uname [-a] [-r]
+
+Flags:
+    -a         all
+    -r         kernel
+
+uptime
+
+which <command>
+
+Arguments:
+    command    target command
+
+who
+
+whoami
+
+yes <message>
+
+Arguments:
+    message    message to repeat
+
+bash <file>
+
+Arguments:
+    file       file to execute
+
+js <file>
+
+Arguments:
+    file       file to execute
+
+help
+
+force <option>
+
+Arguments:
+    option     dump or config
+
+version
+
+sh4u <file>
+
+Arguments:
+    file       file to play
+
+printf <text> <color> <bgcolor>
+
+Arguments:
+    text       text to display
+    color      text color
+    bgcolor    text background color
+
+ggp <pkgname> <local?>
+
+Arguments:
+    pkgname    package name
+    local?     optional local mode
+
+
+V2.0.0 --help
 --meta
 /bin
 2
