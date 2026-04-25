@@ -144,7 +144,7 @@ async function minimalSave() {
         }
 }
 async function verifyKernel(silent = false) {
-    const krnlhash = ["8c70611e83dad60635dcdd4d906a182372106ff416875f5e62c18c1962b14dfb", "751cdb9aaa565b9b8c371a314c1266a0eab9ed5b4beca0352d8066b58f4eb0fc"];
+    const krnlhash = ["670bb6236b7557e8b56834bf4feade3d8664bdeb69f8f2074bfb4f1838c1ba16", "751cdb9aaa565b9b8c371a314c1266a0eab9ed5b4beca0352d8066b58f4eb0fc"];
     let match = false
     for (hash of krnlhash) {
         match = await checkSHA256("/krnl/kernel.js", hash);
@@ -247,6 +247,8 @@ async function recoveryMode(list = []) {
         if (terminal) list.push("/bin/terminal.js");
         const bash = !window.fs.files["/bin/bash.js"] || window.fs.files["/bin/bash.js"].trim().length == 0;
         if (bash) list.push("/bin/bash.js");
+        const config = !window.fs.files["/etc/config.js"] || window.fs.files["/etc/config.js"].trim().length == 0;
+        if (config) list.push("/etc/config.js");
 
     }
     await wait(3000);
@@ -271,9 +273,9 @@ async function recoveryMode(list = []) {
     }
     await wait(3000);
     write("done\n");
-    minimalSave();
+    await minimalSave();
     await wait(3000);
-    boot();
+    location.reload();
     return;
 }
 
@@ -497,13 +499,6 @@ async function boot() {
         }
 
         window.version = version;
-        document.addEventListener("click", () => {
-            if (!document.fullscreenElement) {
-                document.documentElement.requestFullscreen().catch(err => {
-                    console.log("Fullscreen failed:", err);
-                });
-            }
-        }, { once: true });
 
         if (window.fs.files["/dev/sda"] == "*") {
             window.fs.files["/dev/sda"] = window.sda;
@@ -529,4 +524,5 @@ async function boot() {
 }
 window.recoveryMode = recoveryMode;
 window.parseFS1 = parseFS1;
+window.write = write;
 boot();
