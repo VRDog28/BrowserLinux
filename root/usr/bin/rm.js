@@ -53,13 +53,8 @@ function canDelete(path) {
 }
 
 let path;
-if (target.startsWith("/")) {
-    path = target.replace(/\/+/g, "/");
-} else {
-    path = (shell.cwd === "/" ? "/" : shell.cwd + "/") + target;
-    path = path.replace(/\/+/g, "/");
-}
-
+let base = target.startsWith("/") ? target : (shell.cwd === "/" ? "" : shell.cwd) + "/" + target;
+path = "/" + base.split("/").filter(Boolean).reduce((a, p) => p === ".." ? (a.pop(), a) : p === "." ? a : (a.push(p), a), []).join("/");
 function containsProtectedItems(folderPath) {
     for (const filePath of Object.keys(fs.files)) {
         if (filePath.startsWith(folderPath + "/") && !canDelete(filePath)) {
@@ -77,6 +72,7 @@ function containsProtectedItems(folderPath) {
 function deleteFolderRecursively(folderPath) {
     if (containsProtectedItems(folderPath)) {
         write(`rm: cannot remove '${folderPath}': Permission denied\n`);
+        return 1;
     }
 
     for (const filePath of Object.keys(fs.files)) {
@@ -110,6 +106,7 @@ if (path === "/") {
     if (options.includes("r")) {
         if (!options.join("").includes("-no-preserve-root")) { write("rm: it is dangerous to operate recursively on '/'"); return; }
         log("RM", "ATTEMPTING A FULL DISK DELETION", true);
+        
 
         for (const folder of [...fs.folders]) {
             if (folder !== "/") deleteFolderRecursively(folder);
@@ -124,7 +121,8 @@ if (path === "/") {
             }
         }
     } else {
-        write(`rm: cannot remove '${target}': Is a directory`);
+        write(`rm: cannot remove '${target}': Is a directory\n`);
+        return 1;
     }
 }
 
@@ -132,7 +130,8 @@ else if (fs.folders.includes(path)) {
     if (options.includes("r")) {
         deleteFolderRecursively(path);
     } else {
-        write(`rm: cannot remove '${target}': Is a directory`);
+        write(`rm: cannot remove '${target}': Is a directory\n`);
+        return 1;
     }
 } else if (fs.files.hasOwnProperty(path)) {
     if (!canDelete(path)) {

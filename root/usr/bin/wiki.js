@@ -1,0 +1,1 @@
+window.open("https://vrdog28.github.io/BrowserLinux/wiki");

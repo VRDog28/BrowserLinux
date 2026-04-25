@@ -16,12 +16,8 @@ if (
 }
 
 let path;
-if (target.startsWith("/")) {
-    path = target.replace(/\/+/g, "/");
-} else {
-    path = (shell.cwd === "/" ? "/" : shell.cwd + "/") + target;
-    path = path.replace(/\/+/g, "/");
-}
+let base = target.startsWith("/") ? target : (shell.cwd === "/" ? "" : shell.cwd) + "/" + target;
+path = "/" + base.split("/").filter(Boolean).reduce((a, p) => p === ".." ? (a.pop(), a) : p === "." ? a : (a.push(p), a), []).join("/");
 
 const exists = fs.folders.includes(path) || fs.files.hasOwnProperty(path);
 if (!exists) {

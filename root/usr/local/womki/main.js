@@ -273,7 +273,7 @@ async function main() {
                     main();
                     break;
                 case "3":
-                    exitwomki();
+                    await exitwomki();
                     return;
                 case "4":
                     await BuyTokens();
@@ -298,11 +298,19 @@ async function main() {
     });
 }
 
-function exitwomki() {
-    window.shell.inputMode = "command"
+async function exitwomki() {
+    if (window.sap.playing) {
+        window.sap.stop = true;
+        while (window.sap.stop == true) {
+            await wait(100);
+        }
+    }
+    window.shell.inputMode = "command";
     saveFS1();
     clear();
     prompt();
+    return 0;
 }
 window.shell.inputMode = "womki"
+sap.playsap("/usr/local/womki/music")
 main();

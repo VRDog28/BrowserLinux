@@ -6,12 +6,8 @@ if (!shell.args || shell.args.length === 0) {
 const filename = shell.args[0];
 
 let path;
-if (filename.startsWith("/")) {
-    path = filename.replace(/\/+/g, "/");
-} else {
-    path = (shell.cwd === "/" ? "/" : shell.cwd + "/") + filename;
-    path = path.replace(/\/+/g, "/");
-}
+let base = filename.startsWith("/") ? filename : (shell.cwd === "/" ? "" : shell.cwd) + "/" + filename;
+path = "/" + base.split("/").filter(Boolean).reduce((a, p) => p === ".." ? (a.pop(), a) : p === "." ? a : (a.push(p), a), []).join("/");
 
 const parts = path.split("/");
 parts.pop(); 
@@ -54,26 +50,26 @@ screen.innerHTML = "";
 
 function render() {
     clear();
-    write("    Nano                    " + path + "                   \n", "black", "white");
+    write("    Nano                    " + path + "                   \n", "black", "white", true);
     buffer.forEach((line, i) => {
         for (let j = 0; j <= line.length; j++) {
             if (i === cursorY && j === cursorX) {
-                write(line[j] || " ", "black", "white"); 
+                write(line[j] || " ", "black", "white", true); 
 
             } else if (j < line.length) {
-                write(line[j], "white");
+                write(line[j], window.shell.theme[0], window.shell.theme[1], true);
             }
         }
         newline();
     });
-    write("\n\n\n\n\n\n\n");
-    write("        ");
-    write(" [ Welcome to Nano ] \n", "black", "white");
-    write("^S", "black", "white");
-    write(" Save");
+    write("\n\n\n\n\n\n\n", window.shell.theme[0], window.shell.theme[1], true);
+    write("        ", window.shell.theme[0], window.shell.theme[1], true);
+    write(" [ Welcome to Nano ] \n", "black", "white", true);
+    write("^S", "black", "white", true);
+    write(" Save", window.shell.theme[0], window.shell.theme[1], true);
     newline();
-    write("^Q", "black", "white");
-    write(" Quit");
+    write("^Q", "black", "white", true);
+    write(" Quit", window.shell.theme[0], window.shell.theme[1], true);
     newline();
 };
 

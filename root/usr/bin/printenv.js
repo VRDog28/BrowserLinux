@@ -1,1 +1,1 @@
-executeCommand("cat /tmp/var.conf");
+await executeCommand("cat /etc/var.conf");

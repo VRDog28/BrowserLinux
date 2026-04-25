@@ -4,7 +4,6 @@ let active = ["/krnl/kernel.js"];
 let saveTimeout = null;
 let saveLock = false;
 let savePending = false;
-
 function scrollToBottom() {
     requestAnimationFrame(() => {
         requestAnimationFrame(() => {
@@ -12,58 +11,41 @@ function scrollToBottom() {
         });
     });
 }
-
-function write(text, color, bg) {
-    const defaultColor = "white";
-    const defaultBg = "black";
-
-    color = color || (window.shell.theme ? window.shell.theme[0] : defaultColor);
-    bg = bg || (window.shell.theme ? window.shell.theme[1] : defaultBg);
-
-    screen.style.overflowY = "auto";
-    screen.style.maxHeight = screen.style.maxHeight || "100%"; 
-
-    for (let char of text) {
-        const span = document.createElement("span");
-        span.textContent = char;
-        span.style.color = color;
-        span.style.backgroundColor = bg;
-        span.style.fontSize = window.shell.theme?.[3] || "14px";
-        screen.appendChild(span);
-    }
-    scrollToBottom();
+async function kernelPanic(reason) {
+    clear();
+    const styleEl = document.createElement("style");
+    styleEl.innerHTML = `body, #screen { font-family: ClassicConsole, monospace !important; }`;
+    document.head.appendChild(styleEl);
+    const time = new Date().toISOString();
+    write(`Kernel panic -- ${reason}\n`)
+    write("CPU: Unknown\n");
+    write("Memory: 500MB\n");
+    write("Press CTRL and R to restart\n");
+    write(`Detected OS version: ${window.version || "Unknown"}\n`);
+    write(`Time: ${time}\n`);
+    return;
 }
-
 function log(header, text, save = false) {
-    const logPath = "/var/syslog.log";
-
+    const logPath = "/var/syslog.log"
     if (!fs.folders.includes("/var")) {
         fs.folders.push("/var");
     }
-
     if (!fs.files.hasOwnProperty(logPath)) {
         fs.files[logPath] = "";
     }
-
     const lines = text.split("\n");
     const entry = lines.map(line => `${header}: ${line}`).join("\n") + "\n";
-
     fs.files[logPath] += entry;
-    if (save) console.log("hi");
 }
-
 function clear() {
     screen.innerHTML = "";
 }
-
 function newline() {
     screen.appendChild(document.createElement("br"));
 }
-
 function wait(ms) {
     return new Promise(resolve => setTimeout(resolve, ms));
 }
-
 function formatTime(ms) {
     const totalSeconds = Math.floor(ms / 1000);
     const hours = String(Math.floor(totalSeconds / 3600)).padStart(2, '0');
@@ -175,8 +157,8 @@ async function runFile(path) {
     const code = fs.files[path];
     if (!code) {
         log("kernel", "FILE NOT FOUND", true);
-        write("KERNEL: File not found: " + path + "\n");
-        return;
+        write("kernel: File not found: " + path + "\n");
+        return true;
     }
 
     try {
@@ -188,135 +170,196 @@ async function runFile(path) {
         if (index !== -1) {
             active.splice(index, 1);
         }
+        return false
     } catch (e) {
         log("kernel", "Error: " + e.message, true);
-        write("KERNEL Error: " + e.message + "\n");
+        write("kernel: " + e.message + "\n");
         window.shell.lastStatus = 1;
+        return true
     }
 }
 
-async function applyFontFromFile() {
-    if (!window.shell.font) return;
-    const path = window.shell.font.replace(/\/+/g, "/");
-    if (!fs.files.hasOwnProperty(path)) {
-        log("kernel", "CRITICAL ERROR", true);
-        write("KERNEL Error: Font file not found!\n");
-        throw new Error("Font file not found!");
-    }
-
-    const fontContent = fs.files[path].trim();
-    const styleEl = document.createElement("style");
-    styleEl.innerHTML = `body, #screen { font-family: ${fontContent} !important; }`;
-    document.head.appendChild(styleEl);
-}
-
-function startFSSync() {
-    setInterval(async () => {
-        if (!fs1FileHandle) return;
-        try {
-            const file = await fs1FileHandle.getFile();
-            const fs1Content = await file.text();
-            const newFS = parseFS1(fs1Content);
-
-            fs.folders.length = 0;
-            fs.folders.push(...newFS.folders);
-            for (const k in fs.files) delete fs.files[k];
-            for (const k in newFS.files) fs.files[k] = newFS.files[k];
-            for (const k in fs.meta) delete fs.meta[k];
-            for (const k in newFS.meta) fs.meta[k] = newFS.meta[k];
-        } catch (e) {
-            log("kernel", "FS1 SYNC FAILED", true);
-            write("[FS1 sync failed: " + e.message + "]\n");
-        }
-    }, 5000);
-}
 
 async function requestSuperuserPassword(callback) {
     window.shell.inputMode = "password";
-    write("[sudo] password: ", "yellow");
+
+    const textColor = window.shell.theme?.[0] || "white";
+    const bgColor = window.shell.theme?.[1] || "black";
+    const fontSize = window.shell.theme?.[3] || "14px";
+    const fontFamily = getComputedStyle(document.body).fontFamily;
+    const promptSpan = document.createElement("span");
+    promptSpan.textContent = `[sudo] password for ${window.shell.userName}: `;
+    promptSpan.style.color = textColor;
+    promptSpan.style.backgroundColor = bgColor;
+    promptSpan.style.fontSize = fontSize;
+    promptSpan.style.fontFamily = fontFamily;
+
+    screen.appendChild(promptSpan);
 
     let buffer = "";
-    const inputSpan = document.createElement("span");
-    screen.appendChild(inputSpan);
 
     const handler = async e => {
         if (e.key === "Backspace") {
             if (buffer.length > 0) {
                 buffer = buffer.slice(0, -1);
-                inputSpan.lastChild?.remove();
             }
             e.preventDefault();
             return;
         }
+
         if (e.key === "Enter") {
             newline();
             document.removeEventListener("keydown", handler);
-            await callback(buffer);
+            callback(buffer);
             window.shell.inputMode = "command";
             return;
         }
+
         if (e.key.length === 1) {
             buffer += e.key;
-            inputSpan.appendChild(document.createTextNode("*"));
         }
     };
+
     document.addEventListener("keydown", handler);
 }
 
-async function isSetupComplete() {
-    const confPath = "/etc/uas/setup.conf";
 
-    if (!fs.files[confPath]) return false;
-
-    const content = fs.files[confPath].trim();
-
-    return content.includes("setup=1");
+async function powerwashAndRestore(raw) {
+    const fsObj = window.fs;
+    fsObj.folders.length = 0;
+    fsObj.files = {};
+    fsObj.meta = {};
+    const newFS = parseFS1(raw);
+    fsObj.folders.push(...newFS.folders);
+    fsObj.files = newFS.files;
+    fsObj.meta = newFS.meta;
+    await saveFS1();
 }
-
-async function boot() {
-    clear();
-    log("Boot", "Starting boot process");
-
-    fs = window.fs;
-    fs1FileHandle = window.fs1FileHandle;
-
-    for (const path in fs.files)
-        if (path.startsWith("/tmp/") && path != "/tmp/") delete fs.files[path];
-
-    if (fs.files["/etc/config.js"]) {
-        log("Boot", "Running config.js");
-        await runFile("/etc/config.js");
-    }
-
-    await applyFontFromFile();
-    await runFile("/krnl/sound/sap.js");
-    document.body.style.backgroundColor = window.shell.theme?.[2] || "black";
-    log("Boot", "Running /boot/boot.js", true);
-    const setupDone = await isSetupComplete();
-    if (!setupDone) {
-        await runFile("/bin/bash.js");
-        await runFile("/etc/uas/uas.js");
-    } else {
-        await runFile("/boot/boot.js");
+clear();
+if (window.fs.files["/etc/default/lake"]) {
+    if (window.fs.files["/etc/default/lake"].trim().split("=")[1] == "false") {
+        write("Browser Linux (c) 2026");
+        window.writebackup = write;
+        write = (t,c,b,s) => {};
     }
 }
-
+write("[    0.25326] hash validated [0x00000000]\n", "gray");
+await wait(50);
 window.write = write;
+write("[    0.25326] write validated [0x00000000]\n", "gray");
+await wait(50);
+write("[    0.25326] hash validated [0x00000000]\n", "gray");
 window.clear = clear;
+write("[    0.25326] clear validated [0x00000000]\n", "gray");
+await wait(25);
+write("[    0.25326] hash validated [0x00000000]\n", "gray");
+await wait(50);
 window.newline = newline;
+write("[    0.25326] newline validated [0x00000000]\n", "gray");
+await wait(100);
+write("[    0.25326] hash validated [0x00000000]\n", "gray");
+await wait(100);
 window.fs = fs;
+write("[    0.25326] fs validated [0x00000000]\n", "gray");
+await wait(25);
+write("[    0.25326] hash validated [0x00000000]\n", "gray");
 window.runFile = runFile;
+write("[    0.25326] runFile validated [0x00000000]\n", "gray");
+await wait(50);
+write("[    0.25326] hash validated [0x00000000]\n", "gray");
 window.wait = wait;
+write("[    0.25326] wait validated [0x00000000]\n", "gray");
+await wait(25);
+write("[    0.25326] hash validated [0x00000000]\n", "gray");
 window.saveFS1 = saveFS1;
-window.boot = boot;
+write("[    0.25326] saveFS1 validated [0x00000000]\n", "gray");
+await wait(100);
+write("[    0.25326] hash validated [0x00000000]\n", "gray");
 window.log = log;
+write("[    0.25326] log validated [0x00000000]\n", "gray");
+await wait(50);
+write("[    0.25326] hash validated [0x00000000]\n", "gray");
+await wait(50);
 window.requestSuperuserPassword = requestSuperuserPassword;
+write("[    0.25326] password validated [0x00000000]\n", "gray");
+write("[    0.25326] hash validated [0x00000000]\n", "gray");
+await wait(25);
+window.kernelPanic = kernelPanic;
+write("[    0.25326] kernelPanic validated [0x00000000]\n", "gray");
+await wait(100);
+write("[    0.25326] hash validated [0x00000000]\n", "gray");
+await wait(50);
+window.scrollToBottom = scrollToBottom;
+write("[    0.25326] scroll validated [0x00000000]\n", "gray");
+write("[    0.25326] hash validated [0x00000000]\n", "gray");
+await wait(50);
 window.active = active;
+write("[    0.25326] active validated [0x00000000]\n", "gray");
+await wait(25);
+write("[    0.25326] hash validated [0x00000000]\n", "gray");
 window.shell = {};
+write("[    0.25326] shell validated [0x00000000]\n", "gray");
+await wait(25);
+write("[    0.25326] hash validated [0x00000000]\n", "gray");
+await wait(100);
 
 setInterval(() => {
     const elapsed = Date.now() - startTime;
     window.uptime = formatTime(elapsed);
 }, 1000);
-
-boot();
+write("[    0.25326] hash validated [0x00000000]\n", "gray");
+await wait(50);
+write("*************************************\n", "gray");
+write("* 0.25326              0x00000000   *\n", "gray");
+write("*************************************\n", "gray");
+newline();
+newline();
+await wait(25);
+write("*************************************\n", "gray");
+write("* 0.25326              0x00000000   *\n", "gray");
+write("*************************************\n", "gray");
+newline();
+newline();
+await wait(25);
+write("*************************************\n", "gray");
+write("* 0.25326              0x00000000   *\n", "gray");
+write("*************************************\n", "gray");
+newline();
+newline();
+await wait(25);
+write("*************************************\n", "gray");
+write("* 0.25326              0x00000000   *\n", "gray");
+write("*************************************\n", "gray");
+newline();
+newline();
+await wait(25);
+write("*************************************\n", "gray");
+write("* 0.25326              0x00000000   *\n", "gray");
+write("*************************************\n", "gray");
+newline();
+newline();
+await wait(25);
+write("*************************************\n", "gray");
+write("* 0.25326              0x00000000   *\n", "gray");
+write("*************************************\n", "gray");
+newline();
+newline();
+await wait(25);
+write("*************************************\n", "gray");
+write("* 0.25326              0x00000000   *\n", "gray");
+write("*************************************\n", "gray");
+newline();
+newline();
+await wait(25);
+write("*************************************\n", "gray");
+write("* 0.25326              0x00000000   *\n", "gray");
+write("*************************************\n", "gray");
+newline();
+newline();
+await wait(25);
+write("[*] Buffer output=none\n", "gray");
+write("[*] systemd=queue\n", "gray");
+write("[*] Active dump\n", "gray");
+runFile("/etc/systemd/system/init.js");
+write("[*] systemd=active\n", "gray");
+write("[    0.25326] hash validated [0x00000000]\n", "gray");

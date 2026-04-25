@@ -4,7 +4,6 @@ if (!filename) {
     write("Interactive mode is not available\n");
     return 1;
 }
-
 let path;
 let base = filename.startsWith("/") ? filename : (shell.cwd === "/" ? "" : shell.cwd) + "/" + filename;
 path = "/" + base.split("/").filter(Boolean).reduce((a, p) => p === ".." ? (a.pop(), a) : p === "." ? a : (a.push(p), a), []).join("/");
@@ -18,7 +17,7 @@ function getParentFolder(path) {
 
 const parentFolder = getParentFolder(path);
 if (!fs.folders.includes(parentFolder) && parentFolder != "/") {
-    write(`cat: ${filename}: No such file or directory\n`);
+    write(`sh4u: ${filename}: No such file or directory\n`);
     return 1;
 }
 
@@ -41,20 +40,13 @@ function hasReadPermission(path) {
 }
 
 if (!hasReadPermission(path)) {
-    write(`cat: ${filename}: Permission denied\n`);
+    write(`sh4u: ${filename}: Permission denied\n`);
     return 1;
 }
 
 if (fs.files.hasOwnProperty(path)) {
-    if (path == "/dev/sda" && window.sda && shell.userPermission > 3) {
-        write(window.sda + "\n");
-        return;
-    } else if (shell.userPermission < 4 && path == "/dev/sda") {
-        write(`cat: ${filename}: Permission denied\n`);
-        return 1;
-    }
-    write(fs.files[path] + "\n", "white");
+    window.sap.playsap(path, true)
 } else {
-    write(`cat: ${filename}: No such file or directory\n`);
+    write(`sh4u: ${filename}: No such file or directory\n`);
     return 1
 }

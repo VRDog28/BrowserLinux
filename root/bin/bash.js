@@ -2,9 +2,23 @@ window.typemode = false;
 window.typefile = "";
 window.shell.ifStack = [];
 window.shell.whileStack = [];
-
+window.shell.last = [];
+window.shell.whileRef = {};
 let exit = false
 let exitcode = null;
+    function getEffectiveWritePermission(folderPath) {
+        const parts = folderPath.split("/").filter(Boolean);
+        let currentPath = "/";
+        let permission = 0; 
+
+        for (const part of parts) {
+            currentPath = currentPath === "/" ? "/" + part : currentPath + "/" + part;
+            if (fs.meta[currentPath] && fs.meta[currentPath].writepermission !== undefined) {
+                permission = parseInt(fs.meta[currentPath].writepermission);
+            }
+        }
+        return permission;
+    }
 
 async function evaluateCondition(condition) {
     condition = handleVariables(condition).trim();
@@ -49,25 +63,45 @@ async function evaluateCondition(condition) {
 
         return false;
     }
-
-    return false;
+    if (condition.trim() == "true") return true;
+    if (condition.trim() == "false") return false;
+    let originalWrite = write;
+    write = (text, color="d", color2="d") => {};
+    await executeCommand(condition);
+    write = originalWrite;
+    return window.shell.lastStatus === 0;
 }
 
 async function runIfBlock(lines, shouldRun) {
     let execute = false;
+    let depth = 0;
+    lines = lines.slice(1);
+    console.log(lines);
     for (const line of lines) {
-        if (line === "then") {
+        const t = line.trim();
+        if (t.startsWith("if ")) {
+            depth++;
+        }
+        if (t === "then" && depth === 0) {
             execute = shouldRun;
             continue;
         }
-
-        if (line === "else") {
+        if (t === "else" && depth === 0) {
             execute = !shouldRun;
             continue;
         }
-
-        if (line === "fi") break;
-
+        if (t.startsWith("elif") && depth === 0) {
+            if (execute) {
+                shouldRun = false;
+                continue;
+            }
+            shouldRun = await evaluateCondition(t.slice(5));
+            continue;
+        }
+        if (t === "fi") {
+            if (depth === 0) break;
+            depth--;
+        }
         if (execute) {
             await executeCommand(line);
         }
@@ -79,9 +113,6 @@ function yieldToUI() {
 }
 
 async function runWhileBlock(stateRef) {
-
-    const savedStack = window.shell.whileStack;
-    window.shell.whileStack = []; 
 
     const id = Math.random().toString(36).slice(2, 6);
 
@@ -103,7 +134,12 @@ async function runWhileBlock(stateRef) {
             handleVariables(stateRef.condition)
         );
 
+        console.log("run")
+
         if (!result) break;
+
+        console.log("run2")
+
 
         for (const line of stateRef.buffer) {
             const t = line.trim();
@@ -111,21 +147,22 @@ async function runWhileBlock(stateRef) {
             await yieldToUI();
             await executeCommand(t);
 
-            if (stateRef.break || window.shell.breakSignal) {
+            if (stateRef.break) {
                 stateRef.break = false;
-                window.shell.breakSignal = false;
-                window.shell.whileStack = savedStack;
+                window.shell.whileRef = {};
                 return;
+            }
+            if (stateRef.continue) {
+                stateRef.continue = false;
+                window.shell.whileRef.continue = false;
+                break;
             }
         }
     }
-
-    window.shell.whileStack = savedStack; 
-
+    window.shell.whileRef = {};
 }
 
 async function setVar(name, value) {
-    value = await resolveCommandSubstitution(value);
     if (!name || typeof name !== "string") {
         write("bash: invalid variable name\n");
         return;
@@ -138,7 +175,7 @@ async function setVar(name, value) {
         return;
     }
 
-    const varConfPath = "/tmp/var.conf";
+    const varConfPath = "/etc/var.conf";
 
     if (!fs.files[varConfPath]) fs.files[varConfPath] = "";
 
@@ -178,8 +215,20 @@ async function setVar(name, value) {
 async function handleIf(trimmed) {
     const stack = window.shell.ifStack;
     const current = stack[stack.length - 1];
-
+    if (current?.intype) {
+        if (trimmed === "EOF") {
+            current.intype = false;
+        }
+        current.buffer.push(trimmed);
+        return true;
+    }
     if (trimmed.startsWith("if ")) {
+        if (current) {
+            current.depth++;
+            current.buffer.push(trimmed);
+            return true;
+        }
+        window.shell.last.push("if");
         const condition = trimmed.slice(3).trim();
 
         let result = false;
@@ -194,126 +243,150 @@ async function handleIf(trimmed) {
         stack.push({
             waitingForThen: true,
             conditionPassed: result,
-            buffer: [trimmed]
+            buffer: [trimmed],
+            depth: 1,
+            intype: false
         });
 
         return true;
     }
+    if (!current) return false;
 
+    if (trimmed.startsWith("type ") && !current.intype) {
+        current.intype = true;
+        current.buffer.push(trimmed);
+        return true;
+    }
     if (trimmed.startsWith("then")) {
-        if (!current) return true;
-
-        current.waitingForThen = false;
         current.buffer.push("then");
 
         const rest = trimmed.slice(4).trim();
         if (rest) current.buffer.push(rest);
 
+        if (rest && rest.startsWith("if ")) current.depth++;
+        
+
         return true;
     }
-
     if (trimmed.startsWith("else")) {
-        if (!current) return true;
-
         current.buffer.push("else");
 
         const rest = trimmed.slice(4).trim();
         if (rest) current.buffer.push(rest);
 
-        return true;
-    }
-
-    if (trimmed === "fi") {
-        if (!current) return true;
-
-        current.buffer.push("fi");
-
-        const finished = stack.pop();
-
-        await runIfBlock(finished.buffer, finished.conditionPassed);
+        if (rest && rest.startsWith("if ")) current.depth++;
 
         return true;
     }
-
-    if (current) {
+    if (trimmed.startsWith("elif")) {
         current.buffer.push(trimmed);
         return true;
     }
+    if (trimmed === "fi") {
+        current.buffer.push("fi");
+        current.depth--;
+        if (current.depth === 0) {
+            window.shell.last.pop();
+            const finished = stack.pop();
+            await runIfBlock(finished.buffer, finished.conditionPassed);
+        }
 
-    return false;
+        return true;
+    }
+    current.buffer.push(trimmed);
+    return true;
 }
 
 async function handleWhile(raw) {
     const stack = window.shell.whileStack;
     const current = stack[stack.length - 1];
-
+    if (current?.intype) {
+        if (raw === "EOF") {
+            current.intype = false;
+        }
+        current.buffer.push(raw);
+        return true;
+    }
     if (raw.startsWith("while ")) {
         if (current) {
-
+            current.depth++;
             current.buffer.push(raw);
             return true;
         }
+        window.shell.last.push("while");
         stack.push({
             waitingForDo: true,
             condition: raw.slice(6).trim(),
             buffer: [],
-            break: false
+            break: false,
+            intype: false,
+            depth: 1,
+            continue: false
         });
+        return true;
+    }
+    if (!current) return false;
+    if (raw.startsWith("type ") && !current.intype) {
+        current.intype = true;
+        current.buffer.push(raw);
         return true;
     }
 
     if (raw === "do" || raw.startsWith("do ")) {
-        if (!current) return true;
-        current.buffer.push(raw);
         return true;
     }
 
     if (raw === "done") {
-        if (!current) return true;
-
-        let depth = 0;
-        for (const l of current.buffer) {
-            if (l.trim().startsWith("while ")) depth++;
-            if (l.trim() === "done") depth--;
-        }
-
-        if (depth > 0) {
-
-            current.buffer.push(raw);
-            return true;
-        }
-
-        current.buffer.push(raw);
-        const finished = stack.pop();
-
-        if (stack.length === 0) {
+        current.depth--;
+        if (current.depth === 0) {
+            window.shell.last.pop();
+            const finished = stack.pop();
+            window.shell.whileRef = finished;
             await runWhileBlock(finished);
         }
 
         return true;
     }
 
-    if (current) {
-        current.buffer.push(raw);
-        return true;
-    }
 
-    return false;
+    current.buffer.push(raw);
+    return true;
+
 }
 
 function handleAssignment(cmdLine) {
     const assignMatch = cmdLine.match(/^([a-zA-Z_]\w*)=(.+)$/);
-
     if (!assignMatch) return false;
 
     const varName = assignMatch[1];
+    const rawValue = assignMatch[2].trim();
+
     let varValue;
 
+
     try {
-        varValue = Function(`"use strict"; return (${assignMatch[2]});`)();
+        varValue = JSON.parse(rawValue);
     } catch {
-        varValue = assignMatch[2];
+        if (/^[0-9+\-*/().\s]+$/.test(rawValue)) {
+            try {
+                varValue = Function(`"use strict"; return (${rawValue})`)();
+            } catch {
+                varValue = rawValue;
+            }
+        }
+        else if (rawValue === "true") varValue = true;
+        else if (rawValue === "false") varValue = false;
+        else if (
+            (rawValue.startsWith('"') && rawValue.endsWith('"')) ||
+            (rawValue.startsWith("'") && rawValue.endsWith("'"))
+        ) {
+            varValue = rawValue.slice(1, -1);
+        }
+        else {
+            varValue = rawValue;
+        }
     }
+
     setVar(varName, varValue);
     return true;
 }
@@ -368,11 +441,11 @@ async function handlePipes(commandPart) {
 }
 
 function handleVariables(commandPart) {
-    if (!fs.files["/tmp/var.conf"]) return commandPart;
+    if (!fs.files["/etc/var.conf"]) return commandPart;
 
     const allowedKeys = new Set();
 
-    fs.files["/tmp/var.conf"].split("\n").forEach(line => {
+    fs.files["/etc/var.conf"].split("\n").forEach(line => {
         const eq = line.indexOf("=");
         if (eq === -1) return;
 
@@ -414,22 +487,46 @@ async function executeCommandCapture(cmd) {
 }
 
 async function resolveCommandSubstitution(input) {
-    const regex = /\$\(([^)]+)\)/g;
+    let result = "";
+    let i = 0;
 
-    let match;
+    while (i < input.length) {
+        if (input[i] === "$" && input[i + 1] === "(") {
+            i += 2;
 
-    while ((match = regex.exec(input))) {
-        const command = match[1];
+            let depth = 1;
+            let command = "";
 
-        const output = await executeCommandCapture(command);
+            while (i < input.length && depth > 0) {
+                if (input[i] === "(") {
+                    depth++;
+                } else if (input[i] === ")") {
+                    depth--;
+                    if (depth === 0) {
+                        i++;
+                        break;
+                    }
+                }
 
-        input = input.replace(match[0], output.trim());
+                command += input[i];
+                i++;
+            }
+
+            const resolved = await resolveCommandSubstitution(command);
+
+            const output = await executeCommandCapture(resolved);
+
+            result += output.trim();
+        } else {
+            result += input[i];
+            i++;
+        }
     }
 
-    return input;
+    return result;
 }
 
-async function executeCommand(cmdLine) {
+async function executeCommand(cmdLine, store=false) {
     if (window.typemode && window.fs.files.hasOwnProperty(window.typefile)) {
         if (cmdLine == "EOF") {
             window.fs.files[window.typefile] = window.fs.files[window.typefile].replace(/\n$/, "");
@@ -443,24 +540,36 @@ async function executeCommand(cmdLine) {
     }
     if (cmdLine.trim() == "") return;
 
+    const inIf = window.shell.ifStack.length > 0;
+    const inWhile = window.shell.whileStack.length > 0;
+
     const commands = cmdLine.split(";").map(c => c.trim()).filter(Boolean);
 
-    if (commands.length > 1) {
+    if (commands.length > 1 && !inIf && !inWhile) {
         for (const cmd of commands) {
             await executeCommand(cmd);
         }
         return;
     }
 
+    cmdLine = await resolveCommandSubstitution(cmdLine);
+
     const raw = cmdLine.trim(); 
 
-    if (await handleWhile(raw)) return;
+
 
     let trimmed = handleVariables(raw);
 
-    if (await handleIf(trimmed)) return;
+    if (window.shell.last.at(-1) == "if") {
+        if (await handleIf(trimmed)) return;
+    } else if (window.shell.last.at(-1) == "while") {
+        if (await handleWhile(raw)) return;
+    } else {
+        if (await handleWhile(raw)) return;
+        if (await handleIf(trimmed)) return;
+    }
 
-    if (window.fs.files.hasOwnProperty("/home/.bash_history")) {
+    if (window.fs.files.hasOwnProperty("/home/.bash_history") && store) {
         window.fs.files["/home/.bash_history"] += cmdLine + "\n";
     }
 
@@ -476,40 +585,70 @@ async function executeCommand(cmdLine) {
 
     if (await handlePipes(commandPart)) return;
 
-    commandPart = handleVariables(commandPart);
+    commandPart = handleVariables(commandPart).trim();
+
+    let tempparts = commandPart.split(" ")
+    if (Object.keys(window.shell.aliases).length > 0) {
+        for (let key in window.shell.aliases) {
+            if (tempparts[0] == key) {
+                tempparts.shift();
+                commandPart = window.shell.aliases[key] + " " + tempparts.join(" ");
+                break;
+            }
+        }
+    }
+    
 
     const parts = commandPart.split(" ");
     const cmd = parts[0];
     if (cmd === "break") {
-        const stack = window.shell.whileStack;
-        if (stack.length > 0) {
-            stack[stack.length - 1].break = true;
-        } else {
-
-            window.shell.breakSignal = true;
+        if (Object.keys(window.shell.whileRef).length === 0) {
+            write("-bash: break: only meaningful in a 'while' loop\n");
+            return;
         }
+        window.shell.whileRef.break = true;
+        return;
+    } else if (cmd === "continue") {
+            if (Object.keys(window.shell.whileRef).length === 0) {
+                write("-bash: continue: only meaningful in a 'while' loop\n");
+            return;
+        }
+        window.shell.whileRef.continue = true;
         return;
     }
     const argsOrig = parts.slice(1);
 
     let originalWrite = write;
     let wroteToFile = false;
+    let haspermission = false;
+    let path;
 
     if (targetFile) {
+        let base = targetFile.startsWith("/") ? targetFile : (shell.cwd === "/" ? "" : shell.cwd) + "/" + targetFile;
+        path = "/" + base.split("/").filter(Boolean).reduce((a, p) => p === ".." ? (a.pop(), a) : p === "." ? a : (a.push(p), a), []).join("/");
+        if (path === "/dev/null") return;
+        if (fs.meta[path] && fs.meta[path]["writepermission"] && fs.meta[path]["writepermission"] <= shell.userPermission) haspermission = true;
+        if (!haspermission) {
+            let parent = path.substring(0, path.lastIndexOf("/")) || "/";
+            path = parent
+            if (fs.meta[path] && fs.meta[path]["writepermission"] && fs.meta[path]["writepermission"] <= shell.userPermission) haspermission = true;
+            if (!haspermission) {
+                const folderWritePerm = getEffectiveWritePermission(path);
+                if (shell.userPermission >= folderWritePerm) haspermission = true; 
+            }
+        }
+        if (!haspermission) {
+            write("bash: cannot write to '" + path + "': Permission denied\n");
+            window.shell.lastStatus = 1;
+            return;
+        }
         let overwriteFirstWrite = true;
 
         write = (text) => {
             let path;
 
-            if (targetFile.startsWith("/")) {
-                path = targetFile.replace(/\/+/g, "/");
-            } else {
-                path =
-                    (shell.cwd === "/" ? "/" : shell.cwd + "/") + targetFile;
-                path = path.replace(/\/+/g, "/");
-            }
-
-            if (path === "/dev/null") return;
+    let base = targetFile.startsWith("/") ? targetFile : (shell.cwd === "/" ? "" : shell.cwd) + "/" + targetFile;
+    path = "/" + base.split("/").filter(Boolean).reduce((a, p) => p === ".." ? (a.pop(), a) : p === "." ? a : (a.push(p), a), []).join("/");
 
             if (!fs.files.hasOwnProperty(path)) {
                 fs.files[path] = "";
@@ -536,7 +675,7 @@ async function executeCommand(cmdLine) {
 
     let cmdPath = null;
 
-    for (const base of window.shell.path) {
+    for (let base of window.shell.path) {
         const fullPath = `${base}/${cmd}.js`;
 
         if (fs.files[fullPath]) {
@@ -544,19 +683,20 @@ async function executeCommand(cmdLine) {
             break;
         }
     }
-
     if (cmdPath) {
         try {
             window.shell.args = argsOrig;
             await runFile(cmdPath);
         } catch (e) {
             originalWrite(`Error: ${cmd}: ${e.message}\n`);
+            window.shell.lastStatus = 1;
         }
     } else if (cmd == "exit") {
         exit = true;
         if (argsOrig[0]) exitcode = argsOrig[0];
     } else {
         originalWrite(`${cmd}: command not found\n`);
+        window.shell.lastStatus = 127;
     }
 
     if (targetFile) write = originalWrite;
@@ -571,12 +711,8 @@ window.setVar = setVar;
 if (shell.args.length == 0) return;
 const target = shell.args[0];
 let path;
-if (target.startsWith("/")) {
-    path = target.replace(/\/+/g, "/");
-} else {
-    path = (shell.cwd === "/" ? "/" : shell.cwd + "/") + target;
-    path = path.replace(/\/+/g, "/");
-}
+let base = target.startsWith("/") ? target : (shell.cwd === "/" ? "" : shell.cwd) + "/" + target;
+path = "/" + base.split("/").filter(Boolean).reduce((a, p) => p === ".." ? (a.pop(), a) : p === "." ? a : (a.push(p), a), []).join("/");
 
 let file = window.fs.files[path];
 

@@ -14,6 +14,6 @@ try {
     for (const key in fs.meta) delete fs.meta[key];
     for (const key in newFS.meta) fs.meta[key] = newFS.meta[key];
 } catch (e) {
-    log("kernel", "FS1 SYNC FAILED", true);
+    log("kernel", "FS1 SYNC FAILED");
     write("[FS1 sync failed: " + e.message + "]\n");
 }

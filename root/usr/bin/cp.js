@@ -42,10 +42,10 @@ function canWrite(path) {
     return shell.userPermission >= getEffectiveWritePermission(path) || shell.userPermission === 4;
 }
 
-function normalizePath(p) {
-    if (p.startsWith("/")) return p.replace(/\/+/g, "/");
-    let result = (shell.cwd === "/" ? "/" : shell.cwd + "/") + p;
-    return result.replace(/\/+/g, "/");
+function normalizePath(target) {
+    let base = target.startsWith("/") ? target : (shell.cwd === "/" ? "" : shell.cwd) + "/" + target;
+    result = "/" + base.split("/").filter(Boolean).reduce((a, p) => p === ".." ? (a.pop(), a) : p === "." ? a : (a.push(p), a), []).join("/");
+    return result;
 }
 
 const path = normalizePath(source);

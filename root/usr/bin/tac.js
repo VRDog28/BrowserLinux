@@ -6,12 +6,8 @@ if (!filename) {
 }
 
 let path;
-if (filename.startsWith("/")) {
-    path = filename.replace(/\/+/g, "/");
-} else {
-    path = (shell.cwd === "/" ? "/" : shell.cwd + "/") + filename;
-    path = path.replace(/\/+/g, "/");
-}
+let base = filename.startsWith("/") ? filename : (shell.cwd === "/" ? "" : shell.cwd) + "/" + filename;
+path = "/" + base.split("/").filter(Boolean).reduce((a, p) => p === ".." ? (a.pop(), a) : p === "." ? a : (a.push(p), a), []).join("/");
 
 function getParentFolder(path) {
     const parts = path.split("/");

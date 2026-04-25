@@ -40,8 +40,8 @@ if (!shell.args || shell.args.length === 0) {
 
             let newPerm = prevPermission;
 
-            if (fs.files["/tmp/var.conf"]) {
-                const lines = fs.files["/tmp/var.conf"].split("\n");
+            if (fs.files["/etc/var.conf"]) {
+                const lines = fs.files["/etc/var.conf"].split("\n");
 
                 for (let line of lines) {
                     line = line.trim();

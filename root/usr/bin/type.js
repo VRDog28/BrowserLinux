@@ -19,12 +19,8 @@ function getEffectiveWritePermission(folderPath) {
 const filename = shell.args[0];
 
 let path;
-if (filename.startsWith("/")) {
-    path = filename.replace(/\/+/g, "/");
-} else {
-    path = (shell.cwd === "/" ? "/" : shell.cwd + "/") + filename;
-    path = path.replace(/\/+/g, "/");
-}
+let base = filename.startsWith("/") ? filename : (shell.cwd === "/" ? "" : shell.cwd) + "/" + filename;
+path = "/" + base.split("/").filter(Boolean).reduce((a, p) => p === ".." ? (a.pop(), a) : p === "." ? a : (a.push(p), a), []).join("/");
 
 const parts = path.split("/");
 parts.pop(); 
@@ -43,3 +39,4 @@ if (parentWritePerm > shell.userPermission && shell.userPermission !== 4) {
 
 window.typemode = true;
 window.typefile = path;
+window.fs.files[path] = "";

@@ -5,12 +5,8 @@ if (!shell.args || shell.args.length === 0) {
     const foldername = shell.args[0];
 
     let path;
-    if (foldername.startsWith("/")) {
-        path = foldername.replace(/\/+/g, "/");
-    } else {
-        path = (shell.cwd === "/" ? "/" : shell.cwd + "/") + foldername;
-        path = path.replace(/\/+/g, "/");
-    }
+    let base = foldername.startsWith("/") ? foldername : (shell.cwd === "/" ? "" : shell.cwd) + "/" + foldername;
+    path = "/" + base.split("/").filter(Boolean).reduce((a, p) => p === ".." ? (a.pop(), a) : p === "." ? a : (a.push(p), a), []).join("/");
 
     function getEffectivePermissions(folderPath) {
         const parts = folderPath.split("/").filter(Boolean);

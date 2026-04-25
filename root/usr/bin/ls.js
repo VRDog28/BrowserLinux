@@ -31,14 +31,8 @@ detectargs();
 let target = shell.args[0] || ".";
 let listPath;
 
-if (target === ".") {
-    listPath = shell.cwd;
-} else if (target.startsWith("/")) {
-    listPath = target.replace(/\/+/g, "/");
-} else {
-    listPath = (shell.cwd === "/" ? "/" : shell.cwd + "/") + target;
-    listPath = listPath.replace(/\/+/g, "/");
-}
+let base = target.startsWith("/") ? target : (shell.cwd === "/" ? "" : shell.cwd) + "/" + target;
+listPath = "/" + base.split("/").filter(Boolean).reduce((a, p) => p === ".." ? (a.pop(), a) : p === "." ? a : (a.push(p), a), []).join("/");
 
 if (listPath !== "/" && !fs.folders.includes(listPath)) {
     write(`ls: cannot access '${target}': No such file or directory\n`);

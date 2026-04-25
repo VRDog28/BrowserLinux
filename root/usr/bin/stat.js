@@ -4,12 +4,8 @@ if (!shell.args || shell.args.length === 0) {
 }
 const target = shell.args[0];
 let path;
-if (target.startsWith("/")) {
-    path = target.replace(/\/+/g, "/");
-} else {
-    path = (shell.cwd === "/" ? "/" : shell.cwd + "/") + target;
-    path = path.replace(/\/+/g, "/");
-}
+let base = target.startsWith("/") ? target : (shell.cwd === "/" ? "" : shell.cwd) + "/" + target;
+path = "/" + base.split("/").filter(Boolean).reduce((a, p) => p === ".." ? (a.pop(), a) : p === "." ? a : (a.push(p), a), []).join("/");
 if (!fs.meta.hasOwnProperty(path)) {
     write(`stat: cannot statx '${path}'\n`);
     return 1;

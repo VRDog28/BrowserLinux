@@ -6,24 +6,8 @@ if (shell.args.length === 0 || shell.args[0] == "~") {
 let target = shell.args[0];
 let newPath;
 
-if (target === "..") {
-    if (shell.cwd === "/") {
-        return;
-    }
-    const parts = shell.cwd.split("/");
-    parts.pop(); 
-
-    newPath = parts.length === 1 ? "/" : parts.join("/");
-} else if (target === "/") {
-    newPath = "/";
-} else if (target.startsWith("/")) {
-    newPath = target.replace(/\/+/g, "/"); 
-
-} else {
-    newPath = (shell.cwd === "/" ? "/" : shell.cwd + "/") + target; 
-
-    newPath = newPath.replace(/\/+/g, "/");
-}
+let base = target.startsWith("/") ? target : (shell.cwd === "/" ? "" : shell.cwd) + "/" + target;
+newPath = "/" + base.split("/").filter(Boolean).reduce((a, p) => p === ".." ? (a.pop(), a) : p === "." ? a : (a.push(p), a), []).join("/");
 
 function folderExists(path) {
     return path === "/" || fs.folders.includes(path);

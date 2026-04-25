@@ -1,10 +1,6 @@
-const disablesudo = shell.dump.includes("disablesudo");
-const bypasspowerwash = shell.dump.includes("bypasspowerwash");
-const enterprise = !shell.dump.includes("enterprise");
-let bypass = false
-if (disablesudo && bypasspowerwash && enterprise) bypass = true;
-if (shell.userPermission < 4 && !bypass) {
-    write("powerwash: Powerwash requires root\n");
+let bypass = !shell.dump.includes("enterprise");
+if (!bypass) {
+    write("powerwash: powerwash is not allowed\n");
     return;
 }
 write("Are you sure you want to powerwash this device?\n");

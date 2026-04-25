@@ -1,0 +1,239 @@
+[command] | bc
+
+Stdin:
+    command    input command
+
+cat <file>
+
+Arguments:
+    file       input file
+
+cd <path>
+
+Arguments:
+    path       destination path
+
+chmod <readperm> <writeperm> <folder>
+
+Arguments:
+    readperm   read permission 0 - 4
+    writeperm  write permission 0 - 4
+    folder     folder
+
+clear
+
+cp <file|folder> <folder>
+
+Arguments:
+    file       source file
+    folder     source folder
+    folder     destination folder
+
+curl [-L] [-O] [-f] <url>
+
+Flags:
+    -L         follow redirects
+    -O         save to file
+    -f         fail silently
+
+Arguments:
+    url        destination url
+
+date
+
+dmesg
+
+echo <message>
+
+Arguments:
+    message    message to write
+
+env
+
+fsck
+
+groups
+
+head [-n <lines>] [-c <chars>] <file>
+
+Flags:
+    -n <lines> line count
+    -c <chars> character count
+
+Arguments:
+    file       input file
+
+history
+
+hostname [-i]
+
+Flags:
+    -i         ip address
+
+id
+
+ls [-a] <folder>
+
+Flags:
+    -a         view hidden files/folders
+
+Arguments:
+    folder     input folder
+
+mkdir <folder>
+
+Arguments:
+    folder     folder to create
+
+mv <target> <folder>
+
+Arguments:
+    target     target file/folder
+    folder     destination folder
+
+nano <file>
+
+Arguments:
+    file       file to open
+
+powerwash
+
+printenv
+
+ps
+
+pwd
+
+read [-p <msg>] <var>
+
+Flags:
+    -p <msg>   message to display when getting input
+
+Arguments:
+    var        variable to save user input
+
+rm [-r] [-f] [--no-preserve-root] <folder>
+
+Flags:
+    -r         delete recursively
+    -f         force delete
+    -no-preserve-root do not preserve root directory
+
+Arguments:
+    folder     target folder
+
+sleep <time|times|timem|timems>
+
+Arguments:
+    time       sleep time in seconds
+    time(s)    sleep time in seconds
+    time(m)    sleep time in minutes
+    time(ms)   sleep time in milliseconds
+
+stat <folder>
+
+Arguments:
+    folder     target folder
+
+sudo [-s] <command>
+
+Flags:
+    -s         enter root user
+
+Arguments:
+    command    command to execute
+
+sync
+
+tac <file>
+
+Arguments:
+    file       input file
+
+tail [-n <lines>] [-c <chars>] <file>
+
+Flags:
+    -n <lines> line count
+    -c <chars> character count
+
+Arguments:
+    file       input file
+
+touch <file>
+
+Arguments:
+    file       file to create
+
+tree
+
+type <file>
+
+EOF
+
+Arguments:
+    file       file to type out
+
+Notes:
+    EOF        exit type mode
+
+uname [-a] [-r]
+
+Flags:
+    -a         all
+    -r         kernel
+
+uptime
+
+which <command>
+
+Arguments:
+    command    target command
+
+who
+
+whoami
+
+yes <message>
+
+Arguments:
+    message    message to repeat
+
+bash <file>
+
+Arguments:
+    file       file to execute
+
+js <file>
+
+Arguments:
+    file       file to execute
+
+help
+
+force <option>
+
+Arguments:
+    option     dump or config
+
+version
+
+sh4u <file>
+
+Arguments:
+    file       file to play
+
+printf <text> <color> <bgcolor>
+
+Arguments:
+    text       text to display
+    color      text color
+    bgcolor    text background color
+
+ggp <pkgname> <local?>
+
+Arguments:
+    pkgname    package name
+    local?     optional local mode
+
+
+V2.0.0 --help

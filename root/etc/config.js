@@ -57,9 +57,9 @@ if (!profilePath) {
         }
     }
 
-    if (!fs.folders.includes("/tmp")) fs.folders.push("/tmp");
+    if (!fs.folders.includes("/etc")) fs.folders.push("/etc");
 
-    fs.files["/tmp/var.conf"] = fs.files[profilePath]; 
+    fs.files["/etc/var.conf"] = fs.files[profilePath]; 
 
     saveFS1();
 }

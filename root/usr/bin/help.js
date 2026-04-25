@@ -1,0 +1,1 @@
+if (window.fs.files["/usr/share/help/help"]) write(window.fs.files["/usr/share/help/help"] + "\n");

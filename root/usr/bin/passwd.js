@@ -1,17 +1,7 @@
-window.shell.userPermission = 4 
-clear();
-if (!fs.meta["/etc"]) fs.meta["/etc"] = {};
-write("Browser Linux Setup\n");
-newline();
-let userName = "";
-while (!userName) {
-    await executeCommand('read -p "username: " REPLY');
-    userName = (window.shell.REPLY || "").trim();
-    if (!userName) {
-        write("enter a valid username\n");
-    }
+if (window.shell.userPermission != 4) {
+    write("Insufficient permissions\n");
+    return;
 }
-await setVar("userName", userName);
 async function readInput(promptText = "") {
     return new Promise(resolve => {
         let inputBuffer = "";
@@ -60,25 +50,17 @@ async function readInput(promptText = "") {
 }
 let newpass = "";
 async function request() {
-    const pass = await readInput("password: ");
-    const pass2 = await readInput("confirm password: ");
+    const pass = await readInput("New password: ");
+    const pass2 = await readInput("Confirm password: ");
     newpass = pass
     return pass == pass2
 }
+window.shell.inputMode = "passwd";
 while (true) {
     let condition = await request();
     if (condition && newpass != "") break;
     write("Passwords do not match or is invalid\n");
 }
+window.shell.inputMode = "command";
 window.fs.meta["/etc"][".superuser"] = newpass;
-await wait(1000);
-fs.files["/etc/uas/setup.conf"] = "setup=1";
-let config = fs.files["/etc/var.conf"] || "";
-let lines = config.split("\n");
-lines.pop();
-config = lines.join("\n");
-fs.files["/etc/profiles/default.conf"] = config;
-write("\nRestarting...\n");
-await saveFS1();
-await wait(1000);
-location.reload();
+saveFS1();
