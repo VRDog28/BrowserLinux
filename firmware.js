@@ -500,6 +500,14 @@ async function boot() {
 
         window.version = version;
 
+        document.addEventListener("click", () => {
+            if (!document.fullscreenElement) {
+                document.documentElement.requestFullscreen().catch(err => {
+                    console.log("Fullscreen failed:", err);
+                });
+            }
+        }, { once: true });
+
         if (window.fs.files["/dev/sda"] == "*") {
             window.fs.files["/dev/sda"] = window.sda;
         } else if (window.fs.files["/dev/sda"] != "*") {
