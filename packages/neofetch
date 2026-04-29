@@ -1,0 +1,172 @@
+fs1
+--folders
+/usr
+/usr/local
+/usr/local/bin
+--files
+/usr/local/bin/neofetch.js
+163
+const logo = `
+              ***+:-------             
+         ********=:----------         
+       **********-:-------------      
+    +***********=:----------------    
+   ***********+::------------------   
+  *********=.-----------------------  
+ ::::----:::------------------------- 
+ -------------------------------::::-+
+-----------------------------:-++*****
+-----------------------------:+*******
+-----------------------------:-+******
+----------------------------::+*******
+ --------------------------:-+********
+ --------------------------:-******** 
+  -==-.::.:=+=::------------.+******  
+   ************-:-----------.=*****   
+    ***********=:-----------:-****    
+       *********::-----------:++      
+         ********=:-----------        
+             *****=.-----             
+`;
+
+const version = window.version || "Unknown";
+const user = shell.userName || "Unknown";
+const host = shell.hostName || "browserlinux";
+const cwd = shell.cwd || "/";
+const kernel = "BrowserLinux Kernel";
+const uptime = Math.floor(performance.now() / 1000) + "s";
+const separatorLength = user.length + 1 + host.length;
+const separator = "-".repeat(separatorLength);
+const resolution = `${window.innerWidth}x${window.innerHeight}`;
+const de = window.de || "Terminal";
+const terminal = window.curterm || "BrowserLinux Terminal";
+let wmtheme
+if (window.de) wmtheme = "Default";
+if (!wmtheme) wmtheme = "None";
+function detectBrowser() {
+    const ua = navigator.userAgentData;
+
+    if (ua?.brands) {
+        for (const b of ua.brands) {
+            if (b.brand.includes("Chrome")) return "Chrome";
+            if (b.brand.includes("Edge")) return "Edge";
+            if (b.brand.includes("Firefox")) return "Firefox";
+            if (b.brand.includes("Safari")) return "Safari";
+        }
+    }
+
+
+    const uaString = navigator.userAgent;
+
+    if (uaString.includes("Firefox")) return "Firefox";
+    if (uaString.includes("Edg")) return "Edge";
+    if (uaString.includes("Chrome")) return "Chrome";
+    if (uaString.includes("Safari")) return "Safari";
+
+    return "Unknown";
+}
+const info = [
+    [],
+    [[`${user}`, "dodgerblue"], [`@`, "white"], [`${host}`, "dodgerblue"]],
+    [[`${"-".repeat(user.length + 1 + host.length)}`, "white"]],
+    [["OS:", "dodgerblue"], [` BrowserLinux`, "white"]],
+    [["Host:", "dodgerblue"], [" " + detectBrowser(), "white"]],
+    [["Kernel:", "dodgerblue"], [` ${kernel}`, "white"]],
+    [["Uptime:", "dodgerblue"], [` ${window.uptime || "Unknown"}`, "white"]],
+    [["Packages:", "dodgerblue"], [` ${window.fs.files["/etc/.packages"] || "0"} (ggp)`, "white"]],
+    [["Shell:", "dodgerblue"], [" BrowserLinux Bash", "white"]],
+    [["Resolution:", "dodgerblue"], [` ${resolution}`, "white"]],
+    [["DE:", "dodgerblue"], [` ${de}`, "white"]],
+    [["WM:", "dodgerblue"], [` ${de}`, "white"]],
+    [["WM Theme:", "dodgerblue"], [` ${wmtheme}`, "white"]],
+    [["Theme:", "dodgerblue"], [` ${wmtheme}`, "white"]],
+    [["Icons:", "dodgerblue"], [` None`, "white"]],
+    [["Terminal:", "dodgerblue"], [` ${terminal}`, "white"]],
+    [["Terminal Font:", "dodgerblue"], [` ${window.shell.font.split("/").pop()}`, "white"]],
+    [["CPU:", "dodgerblue"], [` Unknown`, "white"]],
+    [["GPU:", "dodgerblue"], [` Unknown`, "white"]],
+    [["Memory:", "dodgerblue"], [` 500MB`, "white"]],
+    [],
+[
+    ["   ", "white", "#1d1d1d"],
+    ["   ", "white", "#de382b"],
+    ["   ", "white", "#39b54a"],
+    ["   ", "white", "#ffc706"],
+    ["   ", "white", "#006fb8"],
+    ["   ", "white", "#762671"],
+    ["   ", "white", "#2cb5e9"],
+    ["   ", "white", "#cccccc"]
+],
+[
+    ["   ", "white", "#808080"],
+    ["   ", "white", "#ff0000"],
+    ["   ", "white", "#00ff00"],
+    ["   ", "white", "#ffff00"],
+    ["   ", "white", "#0000ff"],
+    ["   ", "white", "#ff00ff"],
+    ["   ", "white", "#00ffff"],
+    ["   ", "white", "#ffffff"]
+]
+];
+
+const lines = logo.split("\n");
+const maxLines = Math.max(lines.length, info.length);
+
+function writeColoredLogo(line) {
+    let buffer = "";
+    let type = null;
+
+    function flush() {
+        if (!buffer) return;
+
+        if (type === "land") {
+            write(buffer, "lime");
+        } else if (type === "water") {
+            write(buffer, "dodgerblue");
+        } else {
+            write(buffer, "lime");
+        }
+
+        buffer = "";
+    }
+
+    for (const ch of line) {
+        let newType;
+
+        if (ch === "*") newType = "land";
+        else if ("-:+=.".includes(ch)) newType = "water";
+        else newType = "other";
+
+        if (newType !== type) {
+            flush();
+            type = newType;
+        }
+
+        buffer += ch;
+    }
+
+    flush();
+}
+
+function writeInfoLine(parts) {
+    for (const [text, color, bg="black"] of parts) {
+        write(text, color, bg);
+    }
+}
+
+for (let i = 0; i < maxLines; i++) {
+    const left = lines[i] || "";
+    const right = info[i] || [];
+
+    writeColoredLogo(left);
+
+    const pad = Math.max(0, 40 - left.length);
+    write(" ".repeat(pad), "white");
+
+    if (right.length > 0) {
+        writeInfoLine(right);
+    }
+
+    write("\n");
+}
+--end
