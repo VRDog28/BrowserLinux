@@ -1,0 +1,20 @@
+fs1
+--folders
+/boot
+--files
+/boot/boot.js
+8
+await wait(1000);
+clear();
+log("Boot JS", "Attempting to start terminal.js", true);
+await runFile("/bin/bash.js");
+await runFile("/etc/dump.js");
+if (shell.dump.includes("lock")) { write("This system is locked!"); return; }
+window.shell.aliases = {};
+runFile("/bin/terminal.js");
+--meta
+/boot
+2
+writepermission=3
+readpermission=3
+--end
