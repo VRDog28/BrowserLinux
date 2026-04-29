@@ -22,7 +22,6 @@ fs1
 /usr/share
 /etc/systemd/system
 /usr/local/bin
-/usr/local/example
 /usr/local/womki
 /usr/share/fonts
 /usr/share/help
@@ -8680,9 +8679,6 @@ async function nanoKeyHandler(e) {
 
 document.addEventListener("keydown", nanoKeyHandler);
 render();
-/usr/bin/openexample.js
-1
-window.launchApp("/usr/local/example/app.js");
 /usr/bin/passwd.js
 66
 if (window.shell.userPermission != 4) {
@@ -9858,19 +9854,6 @@ for (let li = 0; li < lines.length; li++) {
 2
 clear();
 runFile("/usr/local/womki/main.js");
-/usr/local/example/app.js
-11
-const win = window.shell.windows.at(-1);
-const root = win.el;
-
-root.style.display = "flex";
-root.style.alignItems = "center";
-root.style.justifyContent = "center";
-root.style.color = "white";
-root.style.fontFamily = "sans-serif";
-root.style.background = "#111";
-
-root.textContent = "I am a example window";
 /usr/local/womki/data
 2
 tokens=0
