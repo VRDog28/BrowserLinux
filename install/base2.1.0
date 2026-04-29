@@ -17274,15 +17274,10 @@ V2.0.0 --help
 2
 writepermission=2
 readpermission=0
-/boot
-2
-writepermission=3
-readpermission=3
 /etc
 3
 writepermission=3
 readpermission=3
-.superuser=default
 /usr/share/fonts
 2
 writepermission=2
@@ -17295,10 +17290,6 @@ readpermission=0
 2
 writepermission=1
 readpermission=0
-/krnl
-2
-writepermission=4
-readpermission=4
 /dev
 2
 writepermission=2
