@@ -1354,7 +1354,7 @@ write("[ ", "gray"); write("OK", "green"); write(" ] ", "gray"); write("Started 
 boot();
 /etc/uas/setup.conf
 1
-setup=1
+setup=0
 /etc/uas/uas.js
 84
 window.shell.userPermission = 4 
@@ -17275,7 +17275,7 @@ V2.0.0 --help
 writepermission=2
 readpermission=0
 /etc
-3
+2
 writepermission=3
 readpermission=3
 /usr/share/fonts
