@@ -30,7 +30,7 @@ fs1
 /usr/share/help
 --files
 /bin/bash.js
-746
+743
 window.typemode = false;
 window.typefile = "";
 window.shell.ifStack = [];
@@ -559,7 +559,7 @@ async function resolveCommandSubstitution(input) {
     return result;
 }
 
-async function executeCommand(cmdLine, store=false) {
+async function executeCommand(cmdLine) {
     if (window.typemode && window.fs.files.hasOwnProperty(window.typefile)) {
         if (cmdLine == "EOF") {
             window.fs.files[window.typefile] = window.fs.files[window.typefile].replace(/\n$/, "");
@@ -602,9 +602,6 @@ async function executeCommand(cmdLine, store=false) {
         if (await handleIf(trimmed)) return;
     }
 
-    if (window.fs.files.hasOwnProperty("/home/.bash_history") && store) {
-        window.fs.files["/home/.bash_history"] += cmdLine + "\n";
-    }
 
     if (cmdLine.split(" ")[0].toLowerCase() === "terminal") return;
 
@@ -793,7 +790,7 @@ let base = target.startsWith("/") ? target : (shell.cwd === "/" ? "" : shell.cwd
 path = "/" + base.split("/").filter(Boolean).reduce((a, p) => p === ".." ? (a.pop(), a) : p === "." ? a : (a.push(p), a), []).join("/");
 runFile(path);
 /bin/terminal.js
-248
+250
 let input = "";
 let cursorPos = 0;
 let inputLineEl = null;
@@ -1013,13 +1010,15 @@ if (e.key === "ArrowDown") {
         screen.appendChild(newLine);
 
         if (input === "exit") {
-            screen.innerHTML = ""
+            clear();
             document.removeEventListener("keydown", keydownHandler); 
 
             return;
         }
-
-        await executeCommand(input, true);
+        if (window.fs.files.hasOwnProperty("/home/.bash_history")) {
+            window.fs.files["/home/.bash_history"] += input + "\n";
+        }
+        await executeCommand(input);
         curindex = 0;
 
         inputLineEl = null;
@@ -1051,15 +1050,18 @@ await runFile("/bin/bash.js");
 await runFile("/etc/dump.js");
 if (shell.dump.includes("lock")) { write("This system is locked!"); return; }
 window.shell.aliases = {};
-await runFile("/bin/terminal.js");
+runFile("/bin/terminal.js");
 /dev/null
 0
 /dev/sda
 1
 *
+/etc/.packages
+1
+0
 /etc/.version
 1
-2.0.0
+2.1.0
 /etc/.write-protect
 1
 *
@@ -1330,6 +1332,8 @@ async function boot() {
         write("Starting ", "gray"); write("Font Service...\n", "white");
         await wait(50);
         await log("systemd", "Starting Font Service");
+        code = await applyFontFromFile();
+        if (code) { kernelPanic("font not found"); return; }
         write("[ ", "gray"); write("OK", "green"); write(" ] ", "gray"); write("Started ", "gray"), write("Font Service.\n", "white");
         write("Starting ", "gray"); write("Boot Process...\n", "white");
         await wait(50);
@@ -1344,8 +1348,6 @@ async function boot() {
         await log("systemd", "Starting Log Service");
         window.log = log2;
         write("[ ", "gray"); write("OK", "green"); write(" ] ", "gray"); write("Started ", "gray"), write("Log Service.\n", "white");
-        code = await applyFontFromFile();
-        if (code) { kernelPanic("font not found"); return; }
         if (window.writebackup) {
             write = window.writebackup;
             window.write = window.writebackup;
@@ -7311,7 +7313,7 @@ F2 3000
 G#3 3100
 F4 3100
 /krnl/kernel.js
-365
+370
 const screen = document.getElementById("screen");
 const startTime = Date.now();
 let active = ["/krnl/kernel.js"];
@@ -7435,7 +7437,14 @@ async function saveFS1() {
         fs = window.fs;
         const lines = ["fs1", "--folders", ...fs.folders, "--files"];
         for (const path in fs.files) {
-            const content = fs.files[path].split("\n");
+            const raw = fs.files[path];
+
+            const content = (typeof raw === "string"
+                ? raw
+                : raw === undefined || raw === null
+                    ? ""
+                    : JSON.stringify(raw)
+            ).split("\n");
             lines.push(path);
             lines.push(content.length.toString());
             lines.push(...content);
@@ -7454,9 +7463,7 @@ async function saveFS1() {
             const writable = await fs1FileHandle.createWritable();
             await writable.write(lines.join("\n"));
             await writable.close();
-        } catch (e) {
-            write("KERNEL: Failed to save: " + e.message + "\n");
-        }
+        } catch (e) {console.log("Failed to save: " + e)}
 
         saveLock = false;
 
@@ -7717,7 +7724,7 @@ path = "/" + base.split("/").filter(Boolean).reduce((a, p) => p === ".." ? (a.po
     let prev = window.shell.inputMode;
     window.shell.inputMode = "sap";
     if (sh4u) document.addEventListener("keydown", handleKeydown);
-    if (sh4u) screen.innerHTML = "";
+    if (sh4u) clear();
     freq = lines[0];
     lines.shift();
     for (const line of lines) {
@@ -7731,7 +7738,7 @@ path = "/" + base.split("/").filter(Boolean).reduce((a, p) => p === ".." ? (a.po
         }
         window.sap.play(line.split(" ")[0], Number(line.split(" ")[1]));
         if (sh4u) {
-            screen.innerHTML = "";
+            clear();
 
             const parts = line.split(" ");
             const note = parts[0];
@@ -7760,7 +7767,7 @@ path = "/" + base.split("/").filter(Boolean).reduce((a, p) => p === ".." ? (a.po
     }
     window.shell.inputMode = prev;
     window.sap.playing = false;
-    if (sh4u) screen.innerHTML = "";
+    if (sh4u) clear();
     if (sh4u) prompt();
     window.sap.stop = false;
     return true;
@@ -8344,7 +8351,7 @@ write(msg + "\n");
 return 0;
 /usr/bin/env.js
 1
-await executeCommand("cat /etc/var.conf");
+write(window.fs.files["/etc/var.conf"]);
 /usr/bin/force.js
 12
 let mode = shell.args[0]
@@ -8421,21 +8428,20 @@ write("fsck: finished\n");
 
 if (typeof saveFS1 === "function") await saveFS1();
 /usr/bin/ggp.js
-64
+65
 if (shell.userPermission != 4) {
     write("ggp: no root detected\n");
     return;
 }
-
 const pkgname = shell.args[0];
 const mode = shell.args[1] || "none";
 if (!pkgname) {
     write("ggp: invalid package name\n");
     return;
 }
-if (mode == "none" || mode != "local") {
+let data = ""
+if (mode != "local") {
     const url = `https://raw.githubusercontent.com/VRDog28/BrowserLinux/main/packages/${pkgname}`;
-    let data = ""
     write("Fetching package from github...\n");
     try {
         const res = await fetch(url);
@@ -8453,7 +8459,7 @@ if (mode == "none" || mode != "local") {
     }
 } else {
     let base = pkgname.startsWith("/") ? pkgname : (shell.cwd === "/" ? "" : shell.cwd) + "/" + pkgname;
-    path = "/" + base.split("/").filter(Boolean).reduce((a, p) => p === ".." ? (a.pop(), a) : p === "." ? a : (a.push(p), a), []).join("/");
+    let path = "/" + base.split("/").filter(Boolean).reduce((a, p) => p === ".." ? (a.pop(), a) : p === "." ? a : (a.push(p), a), []).join("/");
     if (!window.fs.files[path]) {
         write("ggp: local package not found\n");
         return;
@@ -8475,16 +8481,18 @@ if (parsedpkg.folders && parsedpkg.folders.length > 0) {
 }
 if (parsedpkg.files && typeof parsedpkg.files === "object") {
     for (const file in parsedpkg.files) {
-        if (file in fs.files) continue;
         fs.files[file] = parsedpkg.files[file];
     }
 }
 if (parsedpkg.meta && typeof parsedpkg.meta === "object") {
     for (const meta in parsedpkg.meta) {
-        if (meta in fs.meta) continue;
         fs.meta[meta] = parsedpkg.meta[meta];
     }
 }
+if (window.fs.files["/etc/.packages"]) {
+    window.fs.files["/etc/.packages"] = (Number(window.fs.files["/etc/.packages"]) || 0) + 1;
+}
+
 await saveFS1();
 /usr/bin/grep.js
 82
@@ -9055,7 +9063,7 @@ let cursorY = 0,
     isOpen = true;
 
 window.shell.inputMode = "nano";
-screen.innerHTML = "";
+clear();
 
 function render() {
     clear();
@@ -9342,7 +9350,7 @@ async function powerwash() {
 return;
 /usr/bin/printenv.js
 1
-await executeCommand("cat /etc/var.conf");
+write(window.fs.files["/etc/var.conf"]);
 /usr/bin/printf.js
 40
 function splitArgs(input) {
@@ -10596,7 +10604,7 @@ async function Slot() {
         tokens += 15;
     } else if (Number(b) === Number(a) + 1 && Number(c) === Number(b) + 1) {
         write("FORTUNE!!!!\n", "lime");
-        tokens += 1000;
+        tokens += 100000;
     }
     saveData("tokens", tokens);
     await wait(3000);
@@ -17751,7 +17759,7 @@ Arguments:
     local?     optional local mode
 
 
-V2.0.0 --help
+V2.1.0 --help
 --meta
 /bin
 2
@@ -17766,10 +17774,6 @@ readpermission=3
 writepermission=3
 readpermission=3
 .superuser=default
-/root
-2
-writepermission=4
-readpermission=4
 /usr/share/fonts
 2
 writepermission=2
@@ -17786,14 +17790,6 @@ readpermission=0
 2
 writepermission=4
 readpermission=4
-/usr/local/bin
-2
-writepermission=2
-readpermission=0
-/usr/local/womki
-2
-writepermission=2
-readpermission=2
 /dev
 2
 writepermission=2
