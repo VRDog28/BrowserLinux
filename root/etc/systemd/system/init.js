@@ -155,6 +155,8 @@ async function boot() {
         write("Starting ", "gray"); write("Font Service...\n", "white");
         await wait(50);
         await log("systemd", "Starting Font Service");
+        code = await applyFontFromFile();
+        if (code) { kernelPanic("font not found"); return; }
         write("[ ", "gray"); write("OK", "green"); write(" ] ", "gray"); write("Started ", "gray"), write("Font Service.\n", "white");
         write("Starting ", "gray"); write("Boot Process...\n", "white");
         await wait(50);
@@ -169,8 +171,6 @@ async function boot() {
         await log("systemd", "Starting Log Service");
         window.log = log2;
         write("[ ", "gray"); write("OK", "green"); write(" ] ", "gray"); write("Started ", "gray"), write("Log Service.\n", "white");
-        code = await applyFontFromFile();
-        if (code) { kernelPanic("font not found"); return; }
         if (window.writebackup) {
             write = window.writebackup;
             window.write = window.writebackup;

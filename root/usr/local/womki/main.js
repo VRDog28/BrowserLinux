@@ -234,7 +234,7 @@ async function Slot() {
         tokens += 15;
     } else if (Number(b) === Number(a) + 1 && Number(c) === Number(b) + 1) {
         write("FORTUNE!!!!\n", "lime");
-        tokens += 1000;
+        tokens += 100000;
     }
     saveData("tokens", tokens);
     await wait(3000);

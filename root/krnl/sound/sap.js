@@ -33,7 +33,7 @@ path = "/" + base.split("/").filter(Boolean).reduce((a, p) => p === ".." ? (a.po
     let prev = window.shell.inputMode;
     window.shell.inputMode = "sap";
     if (sh4u) document.addEventListener("keydown", handleKeydown);
-    if (sh4u) screen.innerHTML = "";
+    if (sh4u) clear();
     freq = lines[0];
     lines.shift();
     for (const line of lines) {
@@ -47,7 +47,7 @@ path = "/" + base.split("/").filter(Boolean).reduce((a, p) => p === ".." ? (a.po
         }
         window.sap.play(line.split(" ")[0], Number(line.split(" ")[1]));
         if (sh4u) {
-            screen.innerHTML = "";
+            clear();
 
             const parts = line.split(" ");
             const note = parts[0];
@@ -76,7 +76,7 @@ path = "/" + base.split("/").filter(Boolean).reduce((a, p) => p === ".." ? (a.po
     }
     window.shell.inputMode = prev;
     window.sap.playing = false;
-    if (sh4u) screen.innerHTML = "";
+    if (sh4u) clear();
     if (sh4u) prompt();
     window.sap.stop = false;
     return true;

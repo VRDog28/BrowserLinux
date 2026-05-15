@@ -526,7 +526,7 @@ async function resolveCommandSubstitution(input) {
     return result;
 }
 
-async function executeCommand(cmdLine, store=false) {
+async function executeCommand(cmdLine) {
     if (window.typemode && window.fs.files.hasOwnProperty(window.typefile)) {
         if (cmdLine == "EOF") {
             window.fs.files[window.typefile] = window.fs.files[window.typefile].replace(/\n$/, "");
@@ -569,9 +569,6 @@ async function executeCommand(cmdLine, store=false) {
         if (await handleIf(trimmed)) return;
     }
 
-    if (window.fs.files.hasOwnProperty("/home/.bash_history") && store) {
-        window.fs.files["/home/.bash_history"] += cmdLine + "\n";
-    }
 
     if (cmdLine.split(" ")[0].toLowerCase() === "terminal") return;
 

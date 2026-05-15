@@ -217,13 +217,15 @@ if (e.key === "ArrowDown") {
         screen.appendChild(newLine);
 
         if (input === "exit") {
-            screen.innerHTML = ""
+            clear();
             document.removeEventListener("keydown", keydownHandler); 
 
             return;
         }
-
-        await executeCommand(input, true);
+        if (window.fs.files.hasOwnProperty("/home/.bash_history")) {
+            window.fs.files["/home/.bash_history"] += input + "\n";
+        }
+        await executeCommand(input);
         curindex = 0;
 
         inputLineEl = null;

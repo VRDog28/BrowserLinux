@@ -46,7 +46,7 @@ let cursorY = 0,
     isOpen = true;
 
 window.shell.inputMode = "nano";
-screen.innerHTML = "";
+clear();
 
 function render() {
     clear();

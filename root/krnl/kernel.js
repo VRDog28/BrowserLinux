@@ -121,7 +121,14 @@ async function saveFS1() {
         fs = window.fs;
         const lines = ["fs1", "--folders", ...fs.folders, "--files"];
         for (const path in fs.files) {
-            const content = fs.files[path].split("\n");
+            const raw = fs.files[path];
+
+            const content = (typeof raw === "string"
+                ? raw
+                : raw === undefined || raw === null
+                    ? ""
+                    : JSON.stringify(raw)
+            ).split("\n");
             lines.push(path);
             lines.push(content.length.toString());
             lines.push(...content);
@@ -140,9 +147,7 @@ async function saveFS1() {
             const writable = await fs1FileHandle.createWritable();
             await writable.write(lines.join("\n"));
             await writable.close();
-        } catch (e) {
-            write("KERNEL: Failed to save: " + e.message + "\n");
-        }
+        } catch (e) {console.log("Failed to save: " + e)}
 
         saveLock = false;
 

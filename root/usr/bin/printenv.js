@@ -1,1 +1,1 @@
-await executeCommand("cat /etc/var.conf");
+write(window.fs.files["/etc/var.conf"]);
