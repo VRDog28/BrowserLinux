@@ -1,0 +1,71 @@
+fs1
+--folders
+/usr
+/usr/local
+/usr/local/blop
+/usr/local/hyprion
+--files
+/usr/local/blop/manager.js
+53
+window.blop = {
+    images: new Map()
+};
+
+async function blopLoadImg(name, url) {
+    const res = await fetch(url);
+    const blob = await res.blob();
+    const objectUrl = URL.createObjectURL(blob);
+
+    window.blop.images.set(name, {
+        url,
+        objectUrl,
+        blob
+    });
+
+    return objectUrl;
+}
+
+function blopGetImg(name) {
+    const entry = window.blop.images.get(name);
+    if (!entry) return null;
+
+    return entry.objectUrl;
+}
+
+function blopRemoveImg(name) {
+    const entry = window.blop.images.get(name);
+    if (!entry) return;
+
+    URL.revokeObjectURL(entry.objectUrl);
+    window.blop.images.delete(name);
+}
+
+async function blopLoadConfig(text) {
+    const lines = text.split("\n");
+
+    const tasks = [];
+
+    for (const line of lines) {
+        if (!line.includes("=")) continue;
+
+        const [name, url] = line.split("=").map(s => s.trim());
+        tasks.push({ name, url });
+    }
+
+    for (const { name, url } of tasks) {
+        await blopLoadImg(name, url);
+    }
+}
+window.blopLoadConfig = blopLoadConfig;
+window.blopRemoveImg = blopRemoveImg;
+window.blopLoadImg = blopLoadImg;
+window.blopGetImg = blopGetImg;
+/usr/local/hyprion/blob.conf
+1
+hyprionpaper=https://raw.githubusercontent.com/VRDOg28/BrowserLinux/main/screenshots/hyprionpaper.png
+--meta
+/usr/local/blop
+2
+writepermission=2
+readpermission=2
+--end

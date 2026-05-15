@@ -1,0 +1,98 @@
+fs1
+--folders
+/usr
+/usr/local
+/usr/local/bin
+/usr/local/cliff
+--files
+/usr/local/bin/cliff.js
+1
+launchApp("/usr/local/cliff/app.js", shell.args);
+/usr/local/cliff/app.js
+80
+const win = window.shell.windows.at(-1);
+const root = win.el;
+root.style.background = "#1e1e1e";
+root.style.color = "white";
+root.style.fontFamily = "system-ui, sans-serif";
+const bar = document.createElement("div");
+bar.style.display = "flex";
+bar.style.gap = "6px";
+bar.style.padding = "6px";
+bar.style.boxSizing = "border-box";
+bar.style.height = "40px";
+bar.style.background = "#2a2a2a";
+bar.style.borderBottom = "1px solid #333";
+const input = document.createElement("input");
+input.type = "text";
+input.placeholder = "Search or enter URL...";
+input.style.flex = "1";
+input.style.padding = "6px";
+input.style.fontSize = "14px";
+input.style.border = "none";
+input.style.outline = "none";
+input.style.borderRadius = "6px";
+input.style.background = "#111";
+input.style.color = "white";
+const btn = document.createElement("button");
+btn.textContent = "Go";
+btn.style.padding = "6px 10px";
+btn.style.border = "none";
+btn.style.borderRadius = "6px";
+btn.style.background = "#444";
+btn.style.color = "white";
+btn.style.cursor = "pointer";
+const frame = document.createElement("iframe");
+frame.style.width = "100%";
+frame.style.height = "calc(100% - 40px)";
+frame.style.border = "none";
+
+
+function formatUrl(value) {
+    value = value.trim();
+
+    const isUrl =
+        value.startsWith("http://") ||
+        value.startsWith("https://") ||
+        value.includes(".");
+
+    if (!isUrl) {
+        return "https://www.google.com/search?igu=1&hl=en&q=" + encodeURIComponent(value);
+    }
+
+    if (!value.startsWith("http")) {
+        return "https://" + value;
+    }
+
+    return value;
+}
+function navigate() {
+    const url = formatUrl(input.value);
+    frame.src = url;
+}
+btn.onclick = navigate;
+input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") navigate();
+});
+bar.appendChild(input);
+bar.appendChild(btn);
+
+
+root.appendChild(bar);
+root.appendChild(frame);
+
+function onDestroy() {
+    win.destroying = false;
+}
+root.addEventListener("destroy", onDestroy);
+if (win.args.length > 0) {
+    frame.src = win.args[0];
+} else {
+    frame.src = "https://www.google.com/webhp?igu=1";
+}
+--meta
+/usr/local/cliff
+2
+writepermission=2
+readpermission=2
+--end

@@ -1,0 +1,743 @@
+fs1
+--folders
+/krnl
+/usr
+/krnl/sound
+/usr/bin
+/usr/local
+/usr/local/bin
+/usr/local/turminal
+--files
+/krnl/sound/sap.js
+116
+const ctx = new (window.AudioContext || window.webkitAudioContext)();
+let screen2
+let playing
+let freq = 440
+function noteToFreq(note) {
+  const notes = {
+    C:0, "C#":1, D:2, "D#":3, E:4,
+    F:5, "F#":6, G:7, "G#":8, A:9,
+    "A#":10, B:11
+  };
+
+  const match = note.match(/^([A-G]#?)(-?\d)$/);
+  if (!match) return 440;
+
+  const [, pitch, octave] = match;
+  const midi = notes[pitch] + (parseInt(octave) + 1) * 12;
+
+  return freq * Math.pow(2, (midi - 69) / 12);
+}
+async function playSong(cmdLine, sh4u=false) {
+    let path;
+
+    let base = cmdLine.startsWith("/") ? cmdLine : (shell.cwd === "/" ? "" : shell.cwd) + "/" + cmdLine;
+    path = "/" + base.split("/").filter(Boolean).reduce((a, p) => p === ".." ? (a.pop(), a) : p === "." ? a : (a.push(p), a), []).join("/");
+
+    const file = window.fs.files[path];
+    if (!file) return false;
+
+    const lines = file.split("\n")
+    let screen = window.shell.terminals.find(t => t.el?.focus)?.el || document.getElementById("screen");
+    let object = window.shell.terminals.find(t => t.el?.focus);
+    screen2 = screen
+    let mode
+    const isNumber = (s) => /^-?\d+$/.test(s.trim());
+    let index = 0
+    window.sap.playing = true;
+    playing = true;
+    if (sh4u) document.addEventListener("keydown", handleKeydown);
+    if (sh4u) clear(screen);
+    freq = lines[0];
+    lines.shift();
+    for (const line of lines) {
+        mode = "note";
+        if (isNumber(line)) mode = "wait";
+        if (mode == "wait") {
+          if (sh4u) write(index + " | " + line + "ms\n", "white", window.shell.theme[2], true, screen);
+          await wait(Number(line));
+          index++;
+          continue;
+        }
+        window.sap.play(line.split(" ")[0], Number(line.split(" ")[1]));
+        if (sh4u) {
+            clear(screen);
+
+            const parts = line.split(" ");
+            const note = parts[0];
+            const length = Number(parts[1]);
+
+            write(index + " | " + note + " | Length: " + length + "ms\n", "white", "purple", true, screen);
+
+            for (let i = index + 1; i < index + 26 && i < lines.length; i++) {
+                const next = lines[i];
+
+                if (isNumber(next)) {
+                    write(i + " | " + next + "ms\n", "gray", window.shell.theme[2], true, screen);
+                } else {
+                    const p = next.split(" ");
+                    const n = p[0];
+                    const l = Number(p[1]);
+
+                    write(i + " | " + n + " | Length: " + l + "ms\n", "gray", window.shell.theme[2], true, screen);
+                }
+            }
+        }
+        if (window.sap.stop && screen2?.focus) {
+          break;
+        }
+        index++;
+    }
+    window.sap.playing = false;
+    playing = false;
+    if (sh4u) clear(screen);
+    if (sh4u) prompt(object);
+    window.sap.stop = false;
+    screen2 = null;
+    return true;
+}
+
+window.sap = {
+  play(note, duration = 300) {
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+
+    osc.type = "square";
+    osc.frequency.value = noteToFreq(note);
+
+    gain.gain.value = 1;
+
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+
+    osc.start();
+    osc.stop(ctx.currentTime + duration / 1000);
+  }
+};
+
+function handleKeydown(e) {
+    if (e.ctrlKey && e.key.toLowerCase() === "c" && playing && screen2?.focus) {
+        window.sap.stop = true;
+        document.removeEventListener("keydown", handleKeydown);
+    }
+}
+
+window.sap.playsap = playSong
+window.sap.playing = false;
+window.sap.stop = false;
+/usr/bin/passwd.js
+67
+if (window.shell.userPermission != 4) {
+    write("Insufficient permissions\n");
+    return;
+}
+async function readInput(promptText = "") {
+    return new Promise(resolve => {
+        let inputBuffer = "";
+        let screen = window.shell.terminals.find(t => t.el?.focus)?.el || document.getElementById("screen");
+        let host = window.shell.terminals.find(t => t.el?.focus)?.host || document.body;
+        function render() {
+            let text = "";
+            for (char of inputBuffer) text += "*";
+            
+            currentLine.textContent = promptText + text;
+            currentLine.style.color = window.shell.theme?.[0] || "white";
+            currentLine.style.backgroundColor = "transparent"
+            currentLine.style.fontSize = window.shell.theme?.[3] || "14px";
+            currentLine.style.fontFamily = getComputedStyle(host).fontFamily;
+        }
+
+        function onKey(e) {
+            if (e.ctrlKey || e.metaKey || e.altKey) return;
+
+            if (e.key === "Enter") {
+                window.removeEventListener("keydown", onKey);
+                resolve(inputBuffer);
+                return;
+            }
+
+            if (e.key === "Backspace") {
+                inputBuffer = inputBuffer.slice(0, -1);
+                render();
+                return;
+            }
+
+            if (e.key.length === 1) {
+                inputBuffer += e.key;
+                render();
+            }
+        }
+
+        let currentLine = document.createElement("div");
+        screen.appendChild(currentLine);
+
+        render();
+
+        setTimeout(() => {
+            window.addEventListener("keydown", onKey);
+        }, 0);
+    });
+}
+let newpass = "";
+async function request() {
+    const pass = await readInput("New password: ");
+    const pass2 = await readInput("Confirm password: ");
+    newpass = pass
+    return pass == pass2
+}
+window.shell.inputMode = "passwd";
+while (true) {
+    let condition = await request();
+    if (condition && newpass != "") break;
+    write("Passwords do not match or is invalid\n");
+}
+window.shell.inputMode = "command";
+window.fs.meta["/etc"][".superuser"] = newpass;
+saveFS1();
+/usr/bin/read.js
+74
+let promptText = "";
+let varName = null;
+for (let i = 0; i < shell.args.length; i++) {
+    if (shell.args[i] === "-p") {
+        let parts = [];
+        i++;
+
+        while (i < shell.args.length) {
+            parts.push(shell.args[i]);
+
+            if (shell.args[i].endsWith('"')) break;
+            i++;
+        }
+
+        promptText = parts.join(" ").replace(/^"|"$/g, "");
+    } else {
+        varName = shell.args[i];
+    }
+}
+
+async function readInput(promptText = "") {
+    return new Promise(resolve => {
+        let inputBuffer = "";
+        let screen = window.shell.terminals.find(t => t.el?.focus)?.el || document.getElementById("screen");
+        let host = window.shell.terminals.find(t => t.el?.focus)?.host || document.body;
+        function render() {
+            currentLine.textContent = promptText + inputBuffer;
+            currentLine.style.color = window.shell.theme?.[0] || "white";
+            currentLine.style.backgroundColor = "transparent"
+            currentLine.style.fontSize = window.shell.theme?.[3] || "14px";
+            currentLine.style.fontFamily = getComputedStyle(host).fontFamily;
+        }
+
+        function onKey(e) {
+            if (e.ctrlKey || e.metaKey || e.altKey) return;
+
+            if (e.key === "Enter") {
+                window.removeEventListener("keydown", onKey);
+                resolve(inputBuffer);
+                return;
+            }
+
+            if (e.key === "Backspace") {
+                inputBuffer = inputBuffer.slice(0, -1);
+                render();
+                return;
+            }
+
+            if (e.key.length === 1) {
+                inputBuffer += e.key;
+                render();
+            }
+        }
+
+        let currentLine = document.createElement("div");
+        screen.appendChild(currentLine);
+
+        render();
+
+        setTimeout(() => {
+            window.addEventListener("keydown", onKey);
+        }, 0);
+    });
+}
+
+shell.inputMode = "read";
+let value = await readInput(promptText);
+shell.inputMode = "command";
+
+if (varName) {
+    setVar(varName, value);
+} else {
+    setVar("REPLY", value);
+}
+/usr/local/bin/womki.js
+1
+write("womki is not supported by turminal");
+/usr/local/turminal/terminal.js
+264
+const last = window.shell.terminals.at(-1);
+const win = window.shell.windows.at(-1);
+if (!last) return;
+
+let screen = last.el;
+let host = last.host;
+if (!screen || !host) return;
+let input = "";
+let cursorPos = 0;
+let inputLineEl = null;
+let terminaluser = window.shell.userName || "Undefined";
+let terminalhost = window.shell.hostName || "Undefined";
+let usercwd = ""
+let curindex = 0;
+function reload() {
+    let terminaluser = window.shell.userName || "Undefined";
+    let terminalhost = window.shell.hostName || "Undefined";
+}
+function prompt() {
+    input = "";
+    cursorPos = 0;
+
+    const line = document.createElement("div");
+    screen.appendChild(line);
+    inputLineEl = line;
+
+    renderInputLine();
+}
+
+
+function renderInputLine() {
+    if (!last || !window.shell.terminals.includes(last)) { 
+        document.removeEventListener("keydown", keydownHandler);
+        return;
+    }
+    if (!inputLineEl) {
+        inputLineEl = document.createElement("div");
+        screen.appendChild(inputLineEl);
+    }
+
+    inputLineEl.innerHTML = "";
+    if (window.shell.cwd == window.shell.home) {
+        usercwd = "~";
+    } else {
+        usercwd = window.shell.cwd;
+    }
+    const userHostSpan = document.createElement("span");
+    userHostSpan.textContent = `${terminaluser}@${terminalhost}`;
+    userHostSpan.style.color = shell.userPermission > 3 ? "red" : "lime";
+    const colonSpan = document.createElement("span");
+    colonSpan.textContent = ":";
+    colonSpan.style.color = "white";
+    const pathSpan = document.createElement("span");
+    pathSpan.textContent = usercwd;
+    pathSpan.style.color = "dodgerblue";
+    const dollarSpan = document.createElement("span");
+    dollarSpan.textContent = "$ ";
+    dollarSpan.style.color = "white";
+    [userHostSpan, colonSpan, pathSpan, dollarSpan].forEach(span => {
+        span.style.backgroundColor = "transparent";
+        span.style.fontSize = window.shell.theme?.[3] || "14px";
+        span.style.fontFamily = getComputedStyle(host).fontFamily;
+    });
+    inputLineEl.appendChild(userHostSpan);
+    inputLineEl.appendChild(colonSpan);
+    inputLineEl.appendChild(pathSpan);
+    inputLineEl.appendChild(dollarSpan);
+    for (let i = 0; i <= input.length; i++) {
+        const span = document.createElement("span");
+
+        if (i === cursorPos) {
+            span.textContent = input[i] || " ";
+            span.style.backgroundColor = "white"; 
+
+            span.style.color = "black"; 
+
+        } else if (i < input.length) {
+            span.textContent = input[i];
+            span.style.color = window.shell.theme?.[0] || "white";
+            span.style.backgroundColor = "transparent";
+        }
+
+        span.style.fontSize = window.shell.theme?.[3] || "14px";
+        span.style.fontFamily = getComputedStyle(host).fontFamily;
+
+        inputLineEl.appendChild(span);
+    }
+}
+const keydownHandler = async (e) => {
+    if (window.shell.inputMode !== "command" || !screen.focus) return;
+
+    if (e.ctrlKey && e.key.toLowerCase() === "v") {
+        e.preventDefault();
+
+        try {
+            const text = await navigator.clipboard.readText();
+
+            input =
+                input.slice(0, cursorPos) +
+                text +
+                input.slice(cursorPos);
+
+            cursorPos += text.length;
+
+            renderInputLine();
+        } catch (err) {
+            console.error("Paste failed:", err);
+        }
+
+        return;
+    }
+
+    if (e.key === "Backspace") {
+        if (cursorPos > 0) {
+            input = input.slice(0, cursorPos - 1) + input.slice(cursorPos);
+            cursorPos--;
+            renderInputLine();
+        }
+        e.preventDefault();
+        return;
+    }
+
+    if (e.key === "ArrowLeft") {
+        cursorPos = Math.max(0, cursorPos - 1);
+        renderInputLine();
+        e.preventDefault();
+        return;
+    }
+
+    if (e.key === "ArrowRight") {
+        cursorPos = Math.min(input.length, cursorPos + 1);
+        renderInputLine();
+        e.preventDefault();
+        return;
+    }
+const rawFile = window.fs?.files?.["/home/.bash_history"];
+
+const rawHistory = typeof rawFile === "string"
+    ? rawFile.split("\n").filter(line => line.trim() !== "")
+    : [];
+
+const history = [];
+
+for (let i = 0; i < rawHistory.length; i++) {
+    if (i === 0 || rawHistory[i] !== rawHistory[i - 1]) {
+        history.push(rawHistory[i]);
+    }
+}
+
+if (e.key === "ArrowUp") {
+    if (curindex >= history.length) return;
+
+    curindex++;
+
+    input = history[history.length - curindex];
+    cursorPos = input.length;
+
+    renderInputLine();
+    return;
+}
+
+if (e.key === "ArrowDown") {
+    if (curindex <= 0) {
+        curindex = 0;
+        input = "";
+        cursorPos = 0;
+        renderInputLine();
+        return;
+    }
+
+    curindex--;
+
+    if (curindex === 0) {
+        input = "";
+        cursorPos = 0;
+    } else {
+        input = history[history.length - curindex];
+        cursorPos = input.length;
+    }
+
+    renderInputLine();
+    return;
+}
+    if (e.key === "Enter") {
+        if (inputLineEl) {
+            inputLineEl.innerHTML = "";
+            if (window.shell.cwd == window.shell.home) {
+                usercwd = "~";
+            } else {
+                usercwd = window.shell.cwd;
+            }
+            const userHostSpan = document.createElement("span");
+            userHostSpan.textContent = `${terminaluser}@${terminalhost}`;
+            userHostSpan.style.color = shell.userPermission > 3 ? "red" : "lime";
+            const colonSpan = document.createElement("span");
+            colonSpan.textContent = ":";
+            colonSpan.style.color = "white";
+            const pathSpan = document.createElement("span");
+            pathSpan.textContent = usercwd;
+            pathSpan.style.color = "dodgerblue";
+            const dollarSpan = document.createElement("span");
+            dollarSpan.textContent = "$ ";
+            dollarSpan.style.color = "white";
+            [userHostSpan, colonSpan, pathSpan, dollarSpan].forEach(span => {
+                span.style.backgroundColor = "transparent";
+                span.style.fontSize = window.shell.theme?.[3] || "14px";
+                span.style.fontFamily = getComputedStyle(host).fontFamily;
+            });
+            inputLineEl.appendChild(userHostSpan);
+            inputLineEl.appendChild(colonSpan);
+            inputLineEl.appendChild(pathSpan);
+            inputLineEl.appendChild(dollarSpan);
+
+
+            const textSpan = document.createElement("span");
+            textSpan.textContent = input;
+            textSpan.style.color = window.shell.theme?.[0] || "white";
+            textSpan.style.backgroundColor =
+                "transparent";
+            textSpan.style.fontSize = window.shell.theme?.[3] || "14px";
+            textSpan.style.fontFamily =
+                getComputedStyle(host).fontFamily;
+
+            inputLineEl.appendChild(textSpan);
+        }
+
+        const newLine = document.createElement("div");
+        screen.appendChild(newLine);
+
+        if (input === "exit") {
+            clear();
+            document.removeEventListener("keydown", keydownHandler); 
+
+            return;
+        }
+        if (window.fs.files.hasOwnProperty("/home/.bash_history")) {
+            window.fs.files["/home/.bash_history"] += input + "\n";
+        }
+        await executeCommand(input);
+        curindex = 0;
+
+        inputLineEl = null;
+        prompt();
+        return;
+    }
+
+    if (e.key.length === 1) {
+        input = input.slice(0, cursorPos) + e.key + input.slice(cursorPos);
+        cursorPos++;
+        renderInputLine();
+    }
+};
+
+
+function onDestroy() {
+    document.removeEventListener("keydown", keydownHandler);
+    win.destroying = false;
+}
+win.el.addEventListener("destroy", onDestroy);
+document.addEventListener("keydown", keydownHandler);
+last.prompt = prompt;
+window.reload = reload;
+log("Terminal", "Starting main prompt", true);
+prompt();
+/usr/local/turminal/terminal_manager.js
+193
+let terminals = [];
+window.curterm = "Turminal";
+async function createTerminal(t = "0px", l = "0px", w = "100%", h = "100%", f = true) {
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+
+    host.style.position = "absolute";
+    host.style.top = t;
+    host.style.left = l;
+    host.style.width = w;
+    host.style.height = h;
+    host.style.whiteSpace = "pre-wrap";
+
+    const base = window.shell.theme?.[2] || "black";
+    host.style.backgroundColor = makeTransparent(base, 0.6);
+
+    const terminal = document.createElement("div");
+    host.appendChild(terminal);
+
+    terminal.style.whiteSpace = "pre-wrap";
+    terminal.style.cssText = `
+        overflow-y: auto;
+        max-height: 100%;
+        scrollbar-width: none;
+        -ms-overflow-style: none;
+    `;
+
+    const style = document.createElement("style");
+    style.textContent = `
+        .term-hidden-scrollbar::-webkit-scrollbar {
+            display: none;
+        }
+    `;
+    document.head.appendChild(style);
+
+    terminal.classList.add("term-hidden-scrollbar");
+
+    terminal.focus = f;
+    terminal.cwd = "/home";
+    terminal.inputMode2 = "command";
+    terminal.style.backgroundColor = "transparent";
+
+    terminals.push({
+        el: terminal,
+        host: host
+    });
+
+    return host;
+}
+
+function makeTransparent(color, alpha = 0.6) {
+    const div = document.createElement("div");
+    div.style.color = color;
+    document.body.appendChild(div);
+
+    const rgb = getComputedStyle(div).color;
+    document.body.removeChild(div);
+
+    const match = rgb.match(/\d+/g);
+    if (!match) return `rgba(0,0,0,${alpha})`;
+
+    const [r, g, b] = match;
+    return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
+
+async function removeTerminal(index) {
+    const term = terminals[index];
+    if (!term) return;
+    term.host?.remove();
+    terminals.splice(index, 1);
+    for (const t of terminals) {
+        t.el.focus = false;
+    }
+    if (terminals.length === 0) {
+        shell.cwd = "/";
+        shell.inputMode = "command";
+        return;
+    }
+    const last = terminals.at(-1);
+    last.el.focus = true;
+    shell.cwd = last.el.cwd;
+    shell.inputMode = last.el.inputMode2 ?? "command";
+}
+
+function write(text, color, bg, sw, screendef=null) {
+    let screen
+    if (screendef) {
+        screen = screendef;
+    } else {
+        screen = window.shell.terminals.find(t => t.el?.focus)?.el || document.getElementById("screen");
+    }
+    const defaultColor = "white";
+    const defaultBg = "black";
+    color = color || (window.shell.theme ? window.shell.theme[0] : defaultColor);
+    bg = bg || (window.shell.theme ? window.shell.theme[1] : defaultBg);
+    screen.style.overflowY = "auto";
+    screen.style.maxHeight = screen.style.maxHeight || "100%"; 
+    for (let char of text) {
+        const span = document.createElement("span");
+        span.textContent = char;
+        span.style.color = color;
+        if (bg == window.shell.theme[1]) {
+            span.style.backgroundColor = "transparent";
+        } else {
+            span.style.backgroundColor = bg;
+        }
+        span.style.fontSize = window.shell.theme?.[3] || "14px";
+        screen.appendChild(span);
+    }
+    if (!sw) scrollToBottom();
+}
+
+function clear(screendef=null) {
+    let screen
+    if (screendef) {
+        screen = screendef;
+    } else {
+        screen = window.shell.terminals.find(t => t.el?.focus)?.el || document.getElementById("screen");
+    }
+    screen.innerHTML = "";
+}
+function newline(screendef=null) {
+    let screen
+    if (screendef) {
+        screen = screendef;
+    } else {
+        screen = window.shell.terminals.find(t => t.el?.focus)?.el || document.getElementById("screen");
+    }
+    screen.appendChild(document.createElement("br"));
+}
+
+function prompt(objectdef) {
+    let object
+    if (objectdef) {
+        object = objectdef;
+    } else {
+        object = window.shell.terminals.find(t => t.el?.focus);
+    }
+    if (!object) return;
+    if (object.prompt) object.prompt();
+}
+
+async function requestSuperuserPassword(callback) {
+    window.shell.inputMode = "password";
+    let screen = window.shell.terminals.find(t => t.el?.focus)?.el || document.getElementById("screen");
+    let host = window.shell.terminals.find(t => t.el?.focus)?.host || document.body;
+    const textColor = window.shell.theme?.[0] || "white";
+    const bgColor = "transparent";
+    const fontSize = window.shell.theme?.[3] || "14px";
+    const fontFamily = getComputedStyle(host).fontFamily;
+    const promptSpan = document.createElement("span");
+    promptSpan.textContent = `[sudo] password for ${window.shell.userName}: `;
+    promptSpan.style.color = textColor;
+    promptSpan.style.backgroundColor = bgColor;
+    promptSpan.style.fontSize = fontSize;
+    promptSpan.style.fontFamily = fontFamily;
+
+    screen.appendChild(promptSpan);
+
+    let buffer = "";
+
+    const handler = async e => {
+        if (e.key === "Backspace") {
+            if (buffer.length > 0) {
+                buffer = buffer.slice(0, -1);
+            }
+            e.preventDefault();
+            return;
+        }
+
+        if (e.key === "Enter") {
+            newline();
+            document.removeEventListener("keydown", handler);
+            callback(buffer);
+            window.shell.inputMode = "command";
+            return;
+        }
+
+        if (e.key.length === 1) {
+            buffer += e.key;
+        }
+    };
+
+    document.addEventListener("keydown", handler);
+}
+
+window.shell.terminals = terminals;
+window.write = write;
+window.clear = clear;
+window.newline = newline;
+window.prompt = prompt;
+window.createTerminal = createTerminal;
+window.requestSuperuserPassword = requestSuperuserPassword;
+--meta
+/usr/local/turminal
+2
+writepermission=2
+readpermission=2
+--end

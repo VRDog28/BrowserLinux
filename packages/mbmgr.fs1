@@ -1,0 +1,29 @@
+fs1
+--folders
+/boot
+/etc
+--files
+/boot/boot.js
+13
+await wait(1000);
+clear();
+log("Boot JS", "Attempting to start terminal.js", true);
+await runFile("/bin/bash.js");
+await runFile("/etc/dump.js");
+if (shell.dump.includes("lock")) { write("This system is locked!"); return; }
+window.shell.aliases = {};
+if (window.fs.files["/etc/mbmgr.conf"]) {
+    const lines = window.fs.files["/etc/mbmgr.conf"].split("\n");
+    for (const line of lines) {
+        runFile(`${line}`);
+    }
+}
+/etc/mbmgr.conf
+1
+/bin/terminal.js
+--meta
+/usr/local/mbmgr
+2
+writepermission=2
+readpermission=2
+--end

@@ -1,0 +1,242 @@
+fs1
+--folders
+/usr
+/usr/local
+/usr/local/hyprion
+--files
+/usr/local/hyprion/wm.js
+228
+let windows = [];
+window.de = "Hyprion"
+const host = document.createElement("div");
+document.body.appendChild(host);
+host.style.position = "fixed";
+host.style.top = "0";
+host.style.left = "0";
+host.style.width = "100%";
+host.style.height = "100%";
+host.style.overflow = "hidden";
+host.style.backgroundColor = "black";
+window.shell.windows = windows;
+const GAP = 10;
+const OUTER = 20;
+function apply(win, x, y, w, h) {
+    const el = win.el;
+
+    el.style.position = "absolute";
+    el.style.left = `${x}px`;
+    el.style.top = `${y}px`;
+    el.style.width = `${w}px`;
+    el.style.height = `${h}px`;
+
+    el.style.boxSizing = "border-box";
+    el.style.overflow = "hidden";
+
+    el.style.border = "2px solid rgba(255,255,255,0.1)";
+}
+
+function layout() {
+    const W = host.clientWidth;
+    const H = host.clientHeight;
+    const n = windows.length;
+
+    if (!n) return;
+
+    const x0 = OUTER;
+    const y0 = OUTER;
+    const w0 = W - OUTER * 2;
+    const h0 = H - OUTER * 2;
+
+    if (n === 1) {
+        apply(windows[0], x0, y0, w0, h0);
+        return;
+    }
+
+    if (n === 2) {
+        apply(windows[0], x0, y0, (w0 - GAP) / 2, h0);
+        apply(windows[1], x0 + (w0 + GAP) / 2, y0, (w0 - GAP) / 2, h0);
+        return;
+    }
+
+    const masterW = w0 * 0.6;
+
+    apply(windows[0], x0, y0, masterW - GAP / 2, h0);
+
+    const stackH = (h0 - GAP * (n - 2)) / (n - 1);
+
+    for (let i = 1; i < n; i++) {
+        apply(
+            windows[i],
+            x0 + masterW + GAP / 2,
+            y0 + (i - 1) * (stackH + GAP),
+            w0 - masterW - GAP / 2,
+            stackH
+        );
+    }
+}
+
+function applyWallpaper() {
+    const hasBlop = window.fs?.files?.["/usr/local/blop/manager.js"];
+
+    if (!hasBlop) {
+        host.style.background = "black";
+        return;
+    }
+
+    const img = window.blop?.images?.get?.("hyprionpaper")?.objectUrl;
+
+    if (img) {
+        host.style.backgroundImage = `url(${img})`;
+        host.style.backgroundSize = "cover";
+        host.style.backgroundPosition = "center";
+    } else {
+        host.style.background = "black";
+    }
+}
+
+
+async function createWindow(div) {
+    const wrapper = document.createElement("div");
+
+    wrapper.style.position = "absolute";
+    wrapper.style.overflow = "hidden";
+    wrapper.style.background = "transparent";
+    wrapper.style.backdropFilter = "none";
+
+    if (div) {
+        wrapper.appendChild(div);
+    }
+
+    const win = {
+        el: wrapper,
+        focus: false,
+        content: div || null
+    };
+
+    wrapper.addEventListener("mousedown", () => {
+        focusWindow(win);
+    });
+
+    windows.push(win);
+
+    host.appendChild(wrapper);
+
+    layout();
+
+    focusWindow(win);
+
+    return win;
+}
+
+function focusWindow(win) {
+    let lastWin = windows.find(w => w.focus);
+    if (lastWin?.type === "terminal" && lastWin.terminal) {
+        const term = lastWin.terminal;
+        term.cwd = shell.cwd;
+        term.inputMode2 = shell.inputMode || "command";
+    }
+    for (const w of windows) {
+        w.focus = false;
+
+        if (w.type === "terminal" && w.terminal) {
+            w.terminal.el.focus = false;
+        }
+    }
+    win.focus = true;
+
+    if (win.type === "terminal" && win.terminal) {
+        win.terminal.el.focus = true;
+
+        shell.cwd = win.terminal?.cwd ?? "/home";
+        shell.inputMode = win.terminal.inputMode2;
+    }
+}
+async function createTerminalWindow() {
+    const host = await window.createTerminal("0px","0px","100%","100%");
+    const win = await createWindow(host);
+    win.type = "terminal";
+    await runFile("/usr/local/turminal/terminal.js");
+    win.terminal = window.shell.terminals.at(-1);
+    return win;
+}
+
+async function launchApp(jspath, args = []) {
+    const div = document.createElement("div");
+    const win = await createWindow(div);
+    win.type = jspath;
+    win.args = args;
+    await runFile(jspath);
+    return win;
+}
+
+async function closeWindow() {
+        const win = window.shell.windows.find(w => w.focus);
+        if (!win) return;
+
+        win.destroying = true;
+        win.el.dispatchEvent(new Event("destroy"));
+
+        const timeout = new Promise(resolve =>
+            setTimeout(resolve, 5000)
+        );
+
+        const done = new Promise(async (resolve) => {
+            while (win.destroying) {
+                await new Promise(r => setTimeout(r, 10));
+            }
+            resolve();
+        });
+
+        await Promise.race([done, timeout]);
+
+        if (win.type === "terminal") {
+            const term = window.shell.terminals.find(t => t.el?.focus);
+
+            if (term) {
+                const idx = window.shell.terminals.indexOf(term);
+                if (idx !== -1) window.shell.terminals.splice(idx, 1);
+            }
+        }
+
+        win.el.remove();
+
+        const i = window.shell.windows.indexOf(win);
+        if (i !== -1) window.shell.windows.splice(i, 1);
+
+
+        layout();
+
+        if (window.shell.windows.length === 0) {
+            return;
+        }
+
+        const next = window.shell.windows.at(-1);
+        if (next) focusWindow(next);
+}
+
+document.addEventListener("keydown", async (e) => {
+    if (e.altKey && e.key === "Enter") {
+        e.preventDefault();
+        if (typeof window.createTerminal !== "function") {
+            console.warn("Turminal not installed");
+            return;
+        }
+        await createTerminalWindow();
+    }
+});
+document.addEventListener("keydown", async (e) => {
+    if (e.ctrlKey && e.altKey && e.key === "Backspace") {
+        e.preventDefault();
+
+        closeWindow();
+    }
+});
+if (window.fs.files["/usr/local/hyprion/blob.conf"] && window.blopLoadConfig) { await window.blopLoadConfig(window.fs.files["/usr/local/hyprion/blob.conf"]); applyWallpaper(); };
+window.launchApp = launchApp;
+window.closeWindow = closeWindow;
+--meta
+/usr/local/hyprion
+2
+writepermission=2
+readpermission=2
+--end
