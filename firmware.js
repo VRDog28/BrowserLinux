@@ -144,7 +144,7 @@ async function minimalSave() {
         }
 }
 async function verifyKernel(silent = false) {
-    const krnlhash = ["670bb6236b7557e8b56834bf4feade3d8664bdeb69f8f2074bfb4f1838c1ba16", "751cdb9aaa565b9b8c371a314c1266a0eab9ed5b4beca0352d8066b58f4eb0fc"];
+    const krnlhash = ["4598f215dcaebb2fbef4ebc7cbc3a074a0ca968fd669ba5d73484589de98b814", "670bb6236b7557e8b56834bf4feade3d8664bdeb69f8f2074bfb4f1838c1ba16", "751cdb9aaa565b9b8c371a314c1266a0eab9ed5b4beca0352d8066b58f4eb0fc"];
     let match = false
     for (hash of krnlhash) {
         match = await checkSHA256("/krnl/kernel.js", hash);
@@ -499,14 +499,6 @@ async function boot() {
         }
 
         window.version = version;
-
-        document.addEventListener("click", () => {
-            if (!document.fullscreenElement) {
-                document.documentElement.requestFullscreen().catch(err => {
-                    console.log("Fullscreen failed:", err);
-                });
-            }
-        }, { once: true });
 
         if (window.fs.files["/dev/sda"] == "*") {
             window.fs.files["/dev/sda"] = window.sda;
