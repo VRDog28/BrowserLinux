@@ -28,6 +28,7 @@ It provides:
 
 ---
 
+![](https://github.com/VRDog28/BrowserLinux/blob/main/screenshots/screenshot14.png)
 ![](https://github.com/VRDog28/BrowserLinux/blob/main/screenshots/screenshot10.png)
 
 ---
